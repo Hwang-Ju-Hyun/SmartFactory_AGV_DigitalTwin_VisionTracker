@@ -101,6 +101,9 @@ class VisionPreviewGateTest(unittest.TestCase):
         self.assertIsNone(record)
 
     def test_pose_alignment_is_required_for_metric_output(self):
+        config = deepcopy(self.config)
+        config["tags"]["robot_heading_offset_deg"] = None
+        config["tags"]["tag_center_to_robot_origin_body_mm"] = None
         calibration = SimpleNamespace(
             calibration_id="test",
             quality=SimpleNamespace(rms_error_mm=1.0),
@@ -108,7 +111,7 @@ class VisionPreviewGateTest(unittest.TestCase):
         _, record = annotate_frame(
             self.frame,
             [robot_observation()],
-            self.config,
+            config,
             self.map_contract,
             np.eye(3),
             30.0,

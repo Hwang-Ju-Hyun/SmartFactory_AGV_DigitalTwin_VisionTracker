@@ -62,8 +62,9 @@ Server transport must also compare a Server-owned map/version identifier.
    typing equal numbers for physically unequal planes produces bad coordinates.
 5. Measure the printed-top-to-chassis heading correction and the vector from
    the ID 0 centre to the Server AGV origin. Enter `[forward_mm, left_mm]` in
-   `tag_center_to_robot_origin_body_mm`. Both fields default to `null`, so an
-   unmeasured alignment cannot be treated as trusted.
+   `tag_center_to_robot_origin_body_mm`. The current chassis measurement is a
+   90 mm robot-tag height, 0 degree heading correction, and `[0, 0]` because
+   ID 0 is centred over the drive-wheel axle midpoint.
 6. Run the preview and press `c`. Do not move the camera or tags while 30
    samples per reference are collected.
 7. Validate position and heading at several known nodes before adding any

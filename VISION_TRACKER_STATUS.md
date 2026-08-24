@@ -35,8 +35,11 @@ closed-loop motor correction source.
 - a locked calibration created after installation
 - measured node-position and heading error across the map
 
-`vision_config.json` intentionally keeps all anchor entries, heights, heading
-offset, and body offset null.
+`vision_config.json` records the current chassis measurement: the ID 0 surface
+is approximately 90 mm above the floor, its printed front is aligned with the
+chassis front, and its centre is over the drive-wheel axle midpoint. Reference
+anchors and the reference-plane height remain null until the final camera and
+physical reference mounts are installed.
 Therefore the current committed configuration cannot produce a trusted metric
 pose by accident.
 
