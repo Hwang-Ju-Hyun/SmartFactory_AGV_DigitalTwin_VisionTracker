@@ -104,5 +104,5 @@ hardware-synchronized exposure time.
 
 ```powershell
 py -3.12 -m py_compile vision_tracker_preview.py vision_geometry.py vision_map.py vision_calibration.py pose_tracker.py
-py -3.12 -m unittest discover -v -p "test_*.py"
+py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview
 ```
