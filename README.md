@@ -100,6 +100,34 @@ timestamp here. `fresh` therefore means fresh at host receipt, aided by
 continuous draining and a requested one-frame driver buffer; it does not claim
 hardware-synchronized exposure time.
 
+## Logitech C270 camera mode
+
+The committed camera profile requests the C270's native maximum mode:
+`1280 x 720`, `MJPG`, `30 FPS`. Do not request `1920 x 1080`; the C270 is a
+720p camera and that request can make the Windows driver negotiate a slow or
+resampled fallback mode.
+
+At startup the tracker tries the configured Windows backend, then DSHOW, MSMF,
+and OpenCV auto selection. Every candidate receives the same
+`MJPG -> width -> height -> FPS` request and is measured using real frames. A
+candidate is accepted only when it returns exactly `1280 x 720` and at least
+`25 FPS`; otherwise it is released before the next backend is tried. The
+startup `[CAMERA]` JSON also reports the selected backend, actual FOURCC,
+driver-reported FPS, measured FPS, and each property setter result.
+
+The preview separates performance measurements:
+
+- `CAM`: frames delivered by the camera, including frames intentionally skipped
+  by the latest-frame reader while AprilTag work is busy
+- `PROC`: complete preview-loop throughput
+- `DET`: AprilTag detection time for the current processed frame
+
+If `CAM` is near 30 but `PROC` is lower, the detector/display pipeline is the
+bottleneck. If `CAM` itself is low, close other camera applications and improve
+lighting; a long automatic exposure can reduce the rate. Resolution changes
+invalidate an existing locked calibration by design, so create and validate a
+new calibration after adopting the 720p profile.
+
 ## Offline verification
 
 ```powershell

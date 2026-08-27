@@ -76,6 +76,12 @@ class ReceivedFrame:
     frame: np.ndarray
 
 
+@dataclass(frozen=True)
+class CameraProbeResult:
+    frame_size_px: tuple[int, int]
+    measured_fps: float
+
+
 class LatestFrameReader:
     """Continuously drain the camera and retain only its newest received frame."""
 
@@ -193,10 +199,36 @@ def validate_configuration(config: dict[str, Any]) -> None:
     """Reject unsafe or internally inconsistent tracking policy values."""
 
     try:
+        camera = config["camera"]
         detector = config["detector"]
         tags = config["tags"]
         calibration = config["calibration"]
         tracking = config["tracking"]
+
+        if int(camera["index"]) < 0:
+            raise ValueError("camera index must be non-negative")
+        _backend_code(str(camera.get("backend", "auto")))
+        if int(camera["width"]) <= 0 or int(camera["height"]) <= 0:
+            raise ValueError("camera width and height must be positive")
+        requested_fps = float(camera["fps"])
+        minimum_capture_fps = float(
+            camera.get("minimum_capture_fps", requested_fps * 0.8)
+        )
+        if not math.isfinite(requested_fps) or requested_fps <= 0.0:
+            raise ValueError("camera fps must be positive and finite")
+        if (
+            not math.isfinite(minimum_capture_fps)
+            or minimum_capture_fps <= 0.0
+            or minimum_capture_fps > requested_fps
+        ):
+            raise ValueError(
+                "minimum_capture_fps must be positive and no greater than fps"
+            )
+        if int(camera.get("probe_frames", 20)) < 3:
+            raise ValueError("camera probe_frames must be at least three")
+        fourcc = str(camera.get("fourcc", ""))
+        if fourcc and len(fourcc) != 4:
+            raise ValueError("camera fourcc must be empty or exactly four characters")
 
         robot_id = int(tags["robot_id"])
         reference_ids = [int(value) for value in tags["reference_ids"]]
@@ -303,43 +335,157 @@ def _backend_code(name: str) -> int | None:
     return int(choices[normalized])
 
 
-def open_camera(camera_config: dict[str, Any], override_index: int | None):
-    index = int(camera_config["index"] if override_index is None else override_index)
-    backend_name = str(camera_config.get("backend", "auto"))
-    backend = _backend_code(backend_name)
-    capture = (
-        cv2.VideoCapture(index)
-        if backend is None
-        else cv2.VideoCapture(index, backend)
-    )
+def _backend_candidates(preferred_name: str) -> list[tuple[str, int | None]]:
+    preferred = preferred_name.strip().lower()
+    # DSHOW has historically exposed UVC MJPG modes reliably; MSMF is the
+    # modern Windows fallback. Auto remains last because its selected backend
+    # otherwise varies across OpenCV and Windows releases.
+    names = [preferred, "dshow", "msmf", "auto"]
+    candidates: list[tuple[str, int | None]] = []
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            continue
+        seen.add(name)
+        candidates.append((name, _backend_code(name)))
+    return candidates
 
-    if not capture.isOpened() and backend is not None:
-        capture.release()
-        print(f"[VISION] {backend_name} failed; retrying camera {index} with auto backend")
-        capture = cv2.VideoCapture(index)
 
-    if not capture.isOpened():
-        capture.release()
-        raise SystemExit(f"[VISION] Camera {index} could not be opened")
+def _fourcc_text(raw_value: float) -> str:
+    raw = int(round(raw_value))
+    if raw <= 0:
+        return ""
+    return "".join(chr((raw >> (8 * index)) & 0xFF) for index in range(4))
 
+
+def _event_rate(event_count: int, elapsed_seconds: float) -> float:
+    if event_count <= 0 or not math.isfinite(elapsed_seconds) or elapsed_seconds <= 0.0:
+        return 0.0
+    return float(event_count) / elapsed_seconds
+
+
+def _configure_capture(capture: Any, camera_config: dict[str, Any]) -> dict[str, bool]:
+    results: dict[str, bool] = {}
     fourcc = str(camera_config.get("fourcc", ""))
     if len(fourcc) == 4:
-        capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        results["fourcc"] = bool(
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        )
+    results["width"] = bool(
+        capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(camera_config["width"]))
+    )
+    results["height"] = bool(
+        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(camera_config["height"]))
+    )
+    results["fps"] = bool(
+        capture.set(cv2.CAP_PROP_FPS, float(camera_config["fps"]))
+    )
     if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(camera_config["width"]))
-    capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(camera_config["height"]))
-    capture.set(cv2.CAP_PROP_FPS, float(camera_config["fps"]))
+        results["buffer_size"] = bool(capture.set(cv2.CAP_PROP_BUFFERSIZE, 1))
+    return results
 
-    actual = {
-        "index": index,
-        "width": int(round(capture.get(cv2.CAP_PROP_FRAME_WIDTH))),
-        "height": int(round(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))),
-        "fps": float(capture.get(cv2.CAP_PROP_FPS)),
-        "backend": capture.getBackendName() if hasattr(capture, "getBackendName") else "unknown",
-    }
-    print("[CAMERA] " + json.dumps(actual, ensure_ascii=False))
-    return capture, actual
+
+def _probe_capture(capture: Any, frame_count: int) -> CameraProbeResult:
+    # Discard initial frames so device startup and an old driver buffer do not
+    # inflate or depress the steady-state measurement.
+    for _ in range(3):
+        success, _ = capture.read()
+        if not success:
+            raise RuntimeError("camera returned no frame during warm-up")
+
+    timestamps: list[float] = []
+    frame_size: tuple[int, int] | None = None
+    for _ in range(frame_count):
+        success, frame = capture.read()
+        received_at = time.perf_counter()
+        if not success:
+            raise RuntimeError("camera returned no frame during FPS probe")
+        current_size = frame_size_px(frame)
+        if frame_size is not None and current_size != frame_size:
+            raise RuntimeError(
+                f"camera frame size changed during probe: {frame_size} -> {current_size}"
+            )
+        frame_size = current_size
+        timestamps.append(received_at)
+
+    if frame_size is None or len(timestamps) < 2:
+        raise RuntimeError("camera FPS probe did not receive enough frames")
+    elapsed = timestamps[-1] - timestamps[0]
+    if elapsed <= 0.0:
+        raise RuntimeError("camera FPS probe clock did not advance")
+    return CameraProbeResult(
+        frame_size_px=frame_size,
+        measured_fps=(len(timestamps) - 1) / elapsed,
+    )
+
+
+def open_camera(camera_config: dict[str, Any], override_index: int | None):
+    index = int(camera_config["index"] if override_index is None else override_index)
+    preferred_backend = str(camera_config.get("backend", "auto"))
+    requested_width = int(camera_config["width"])
+    requested_height = int(camera_config["height"])
+    requested_fps = float(camera_config["fps"])
+    minimum_capture_fps = float(
+        camera_config.get("minimum_capture_fps", requested_fps * 0.8)
+    )
+    probe_frames = int(camera_config.get("probe_frames", 20))
+    failures: list[str] = []
+
+    for backend_name, backend in _backend_candidates(preferred_backend):
+        capture = (
+            cv2.VideoCapture(index)
+            if backend is None
+            else cv2.VideoCapture(index, backend)
+        )
+        if not capture.isOpened():
+            capture.release()
+            failures.append(f"{backend_name}: open failed")
+            continue
+
+        set_results = _configure_capture(capture, camera_config)
+        try:
+            probe = _probe_capture(capture, probe_frames)
+        except RuntimeError as error:
+            capture.release()
+            failures.append(f"{backend_name}: {error}")
+            continue
+
+        actual = {
+            "index": index,
+            "requested_backend": backend_name,
+            "backend": capture.getBackendName()
+            if hasattr(capture, "getBackendName")
+            else "unknown",
+            "width": probe.frame_size_px[0],
+            "height": probe.frame_size_px[1],
+            "reported_fps": float(capture.get(cv2.CAP_PROP_FPS)),
+            "measured_fps": probe.measured_fps,
+            "fourcc": _fourcc_text(capture.get(cv2.CAP_PROP_FOURCC)),
+            "set_ok": set_results,
+        }
+        size_matches = probe.frame_size_px == (requested_width, requested_height)
+        speed_matches = probe.measured_fps >= minimum_capture_fps
+        if size_matches and speed_matches:
+            print("[CAMERA] " + json.dumps(actual, ensure_ascii=False))
+            return capture, actual
+
+        capture.release()
+        reason = (
+            f"{backend_name}: actual={probe.frame_size_px[0]}x"
+            f"{probe.frame_size_px[1]}@{probe.measured_fps:.1f}, "
+            f"required={requested_width}x{requested_height}@"
+            f">={minimum_capture_fps:.1f}"
+        )
+        failures.append(reason)
+        print(f"[CAMERA] Rejected {reason}")
+
+    details = "; ".join(failures)
+    raise SystemExit(
+        f"[CAMERA] Could not negotiate camera {index} at "
+        f"{requested_width}x{requested_height} {camera_config.get('fourcc', '')} "
+        f"near {requested_fps:.1f} FPS. {details}. Close other camera apps and "
+        "add lighting if auto exposure is lowering the frame rate."
+    )
 
 
 def observations_from_frame(detector: Detector, frame: np.ndarray) -> list[TagObservation]:
@@ -572,6 +718,8 @@ def annotate_frame(
     calibration: PlanarCalibration | None,
     verification_count: int,
     verification_age_s: float | None,
+    capture_fps: float | None = None,
+    detection_ms: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any] | None]:
     output = frame.copy()
     tags_config = config["tags"]
@@ -665,9 +813,14 @@ def annotate_frame(
         if verification_age_s is not None
         else ""
     )
+    performance_text = f"FPS PROC={measured_fps:.1f}"
+    if capture_fps is not None:
+        performance_text = f"FPS CAM={capture_fps:.1f} PROC={measured_fps:.1f}"
+    if detection_ms is not None:
+        performance_text += f" DET={detection_ms:.1f}ms"
     cv2.putText(
         output,
-        f"FPS {measured_fps:.1f} | accepted {len(accepted)}/{len(observations)} | calibration {calibration_state}{age_text} refs={verification_count}",
+        f"{performance_text} | accepted {len(accepted)}/{len(observations)} | calibration {calibration_state}{age_text} refs={verification_count}",
         (20, 35),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.75,
@@ -923,8 +1076,10 @@ def run_camera(
         float(config["tracking"]["maximum_fresh_age_seconds"]),
     )
     console_period = float(display["console_period_seconds"])
-    previous_frame_time = time.perf_counter()
-    smoothed_fps = 0.0
+    previous_capture_time: float | None = None
+    previous_processing_time: float | None = None
+    smoothed_capture_fps = float(reported_camera.get("measured_fps", 0.0))
+    smoothed_processing_fps = 0.0
     last_console_time = 0.0
     last_detection_state: tuple[tuple[int, int], ...] | None = None
     last_pose_state: str | None = None
@@ -939,10 +1094,12 @@ def run_camera(
         )
         frame_reader.start()
         while True:
+            previous_source_sequence = last_source_sequence
             received = frame_reader.read_after(last_source_sequence)
             last_source_sequence = received.source_sequence
             frame = received.frame
             received_at_s = received.received_monotonic_s
+            processing_started_s = time.perf_counter()
 
             current_size = require_frame_size(frame, image_size)
             if image_size is None:
@@ -960,16 +1117,34 @@ def run_camera(
                     config, map_contract, reference_positions, image_size
                 )
 
-            elapsed = max(received_at_s - previous_frame_time, 1e-9)
-            previous_frame_time = received_at_s
-            instantaneous_fps = 1.0 / elapsed
-            smoothed_fps = (
-                instantaneous_fps
-                if smoothed_fps == 0.0
-                else smoothed_fps * 0.9 + instantaneous_fps * 0.1
-            )
+            if previous_capture_time is not None and previous_source_sequence > 0:
+                capture_elapsed = received_at_s - previous_capture_time
+                captured_frames = received.source_sequence - previous_source_sequence
+                instantaneous_capture_fps = _event_rate(
+                    captured_frames, capture_elapsed
+                )
+                smoothed_capture_fps = (
+                    instantaneous_capture_fps
+                    if smoothed_capture_fps == 0.0
+                    else smoothed_capture_fps * 0.9
+                    + instantaneous_capture_fps * 0.1
+                )
+            previous_capture_time = received_at_s
 
+            if previous_processing_time is not None:
+                processing_elapsed = processing_started_s - previous_processing_time
+                instantaneous_processing_fps = _event_rate(1, processing_elapsed)
+                smoothed_processing_fps = (
+                    instantaneous_processing_fps
+                    if smoothed_processing_fps == 0.0
+                    else smoothed_processing_fps * 0.9
+                    + instantaneous_processing_fps * 0.1
+                )
+            previous_processing_time = processing_started_s
+
+            detection_started_s = time.perf_counter()
             observations = observations_from_frame(detector, frame)
+            detection_ms = (time.perf_counter() - detection_started_s) * 1000.0
             reference_centers = unique_reference_centers(
                 observations,
                 set(reference_positions),
@@ -1114,11 +1289,13 @@ def run_camera(
                 config,
                 map_contract,
                 map_homography,
-                smoothed_fps,
+                smoothed_processing_fps,
                 calibration_state,
                 calibration,
                 len(reference_centers),
                 verification_age,
+                capture_fps=smoothed_capture_fps,
+                detection_ms=detection_ms,
             )
 
             measurement = None

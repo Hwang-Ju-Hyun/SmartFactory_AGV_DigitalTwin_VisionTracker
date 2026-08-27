@@ -2,10 +2,12 @@
   "camera": {
     "index": 0,
     "backend": "dshow",
-    "width": 1920,
-    "height": 1080,
+    "width": 1280,
+    "height": 720,
     "fps": 30,
-    "fourcc": "MJPG"
+    "fourcc": "MJPG",
+    "minimum_capture_fps": 25.0,
+    "probe_frames": 20
   },
   "detector": {
     "families": "tag36h11",

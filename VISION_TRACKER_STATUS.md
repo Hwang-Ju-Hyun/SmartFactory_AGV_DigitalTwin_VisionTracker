@@ -22,6 +22,10 @@ closed-loop motor correction source.
 - fail-closed metric output on stale/moved references or plane mismatch
 - measured tag-centre-to-AGV-origin rigid-body correction and map-ROI rejection
 - latest-frame-only camera reader plus explicit host-receipt freshness timing
+- C270-native 1280x720 MJPG/30 request with measured DSHOW/MSMF/auto backend
+  negotiation and rejection of slow or wrong-resolution modes
+- separate camera-delivery, full-processing, and AprilTag-detection performance
+  measurements so skipped frames are counted correctly
 - `MEASURED`, explicitly stale `HELD`, and pose-free `LOST` states
 - no Server, Unity, ESP32, or motor-control connection
 
@@ -34,6 +38,8 @@ closed-loop motor correction source.
 - measured ID 0 heading alignment and tag-centre-to-Server-origin offset
 - a locked calibration created after installation
 - measured node-position and heading error across the map
+- C270 hardware confirmation that the selected backend sustains approximately
+  30 FPS under the final overhead lighting
 
 `vision_config.json` records the current chassis measurement: the ID 0 surface
 is approximately 90 mm above the floor, its printed front is aligned with the
