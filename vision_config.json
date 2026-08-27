@@ -6,8 +6,10 @@
     "height": 720,
     "fps": 30,
     "fourcc": "MJPG",
+    "auto_exposure": false,
+    "exposure": -6.0,
     "minimum_capture_fps": 25.0,
-    "probe_frames": 20
+    "probe_frames": 10
   },
   "detector": {
     "families": "tag36h11",

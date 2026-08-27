@@ -254,8 +254,10 @@ class VisionPreviewGateTest(unittest.TestCase):
             (camera["width"], camera["height"], camera["fps"], camera["fourcc"]),
             (1280, 720, 30, "MJPG"),
         )
+        self.assertFalse(camera["auto_exposure"])
+        self.assertEqual(camera["exposure"], -6.0)
 
-    def test_open_camera_negotiates_mjpg_before_720p30(self):
+    def test_open_camera_keeps_mjpg_as_final_stream_setting(self):
         capture = ConfigurableFakeCapture()
         probe = CameraProbeResult((1280, 720), 29.8)
         with patch(
@@ -269,17 +271,21 @@ class VisionPreviewGateTest(unittest.TestCase):
         constructor.assert_called_once_with(0, cv2.CAP_DSHOW)
         property_order = [property_id for property_id, _ in capture.set_calls]
         self.assertEqual(
-            property_order[:4],
+            property_order[:6],
             [
-                cv2.CAP_PROP_FOURCC,
                 cv2.CAP_PROP_FRAME_WIDTH,
                 cv2.CAP_PROP_FRAME_HEIGHT,
                 cv2.CAP_PROP_FPS,
+                cv2.CAP_PROP_FOURCC,
+                cv2.CAP_PROP_BUFFERSIZE,
+                cv2.CAP_PROP_AUTO_EXPOSURE,
             ],
         )
+        self.assertEqual(capture.set_calls[6], (cv2.CAP_PROP_EXPOSURE, -6.0))
         self.assertEqual((actual["width"], actual["height"]), (1280, 720))
         self.assertAlmostEqual(actual["measured_fps"], 29.8)
         self.assertEqual(actual["fourcc"], "MJPG")
+        self.assertTrue(actual["minimum_capture_fps_met"])
 
     def test_open_camera_releases_failed_dshow_and_uses_msmf(self):
         failed = ConfigurableFakeCapture(opened=False)
@@ -304,29 +310,33 @@ class VisionPreviewGateTest(unittest.TestCase):
         self.assertEqual(
             [property_id for property_id, _ in accepted.set_calls][:4],
             [
-                cv2.CAP_PROP_FOURCC,
                 cv2.CAP_PROP_FRAME_WIDTH,
                 cv2.CAP_PROP_FRAME_HEIGHT,
                 cv2.CAP_PROP_FPS,
+                cv2.CAP_PROP_FOURCC,
             ],
         )
 
-    def test_open_camera_rejects_slow_mode_from_every_backend(self):
-        captures = [
-            ConfigurableFakeCapture(backend_name=name)
-            for name in ("DSHOW", "MSMF", "AUTO")
-        ]
+    def test_open_camera_warns_but_keeps_slow_correct_size_mode(self):
+        capture = ConfigurableFakeCapture(backend_name="DSHOW")
         slow = CameraProbeResult((1280, 720), 7.5)
         with patch(
-            "vision_tracker_preview.cv2.VideoCapture", side_effect=captures
-        ), patch(
-            "vision_tracker_preview._probe_capture",
-            side_effect=[slow, slow, slow],
-        ):
-            with self.assertRaisesRegex(SystemExit, "Could not negotiate"):
-                open_camera(deepcopy(self.config["camera"]), None)
+            "vision_tracker_preview.cv2.VideoCapture", return_value=capture
+        ) as constructor, patch(
+            "vision_tracker_preview._probe_capture", return_value=slow
+        ), patch("builtins.print") as printer:
+            selected, actual = open_camera(deepcopy(self.config["camera"]), None)
 
-        self.assertTrue(all(capture.released for capture in captures))
+        self.assertIs(selected, capture)
+        self.assertFalse(capture.released)
+        self.assertFalse(actual["minimum_capture_fps_met"])
+        constructor.assert_called_once_with(0, cv2.CAP_DSHOW)
+        self.assertTrue(
+            any(
+                str(arguments[0]).startswith("[CAMERA] WARNING slow capture")
+                for arguments, _ in printer.call_args_list
+            )
+        )
 
     def test_capture_rate_counts_frames_skipped_by_processing(self):
         self.assertAlmostEqual(_event_rate(4, 4.0 / 30.0), 30.0)

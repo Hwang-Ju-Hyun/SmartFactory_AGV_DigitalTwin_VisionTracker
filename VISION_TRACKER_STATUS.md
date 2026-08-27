@@ -22,8 +22,8 @@ closed-loop motor correction source.
 - fail-closed metric output on stale/moved references or plane mismatch
 - measured tag-centre-to-AGV-origin rigid-body correction and map-ROI rejection
 - latest-frame-only camera reader plus explicit host-receipt freshness timing
-- C270-native 1280x720 MJPG/30 request with measured DSHOW/MSMF/auto backend
-  negotiation and rejection of slow or wrong-resolution modes
+- C270-native 1280x720 MJPG/30 request with DirectShow-safe property ordering,
+  bounded manual exposure, and measured DSHOW/MSMF/auto backend negotiation
 - separate camera-delivery, full-processing, and AprilTag-detection performance
   measurements so skipped frames are counted correctly
 - `MEASURED`, explicitly stale `HELD`, and pose-free `LOST` states

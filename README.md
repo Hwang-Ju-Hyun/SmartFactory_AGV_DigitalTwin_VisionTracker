@@ -108,12 +108,14 @@ The committed camera profile requests the C270's native maximum mode:
 resampled fallback mode.
 
 At startup the tracker tries the configured Windows backend, then DSHOW, MSMF,
-and OpenCV auto selection. Every candidate receives the same
-`MJPG -> width -> height -> FPS` request and is measured using real frames. A
-candidate is accepted only when it returns exactly `1280 x 720` and at least
-`25 FPS`; otherwise it is released before the next backend is tried. The
-startup `[CAMERA]` JSON also reports the selected backend, actual FOURCC,
-driver-reported FPS, measured FPS, and each property setter result.
+and OpenCV auto selection when opening, reading, or resolution negotiation
+fails. DirectShow receives `width -> height -> FPS -> MJPG`, keeping MJPG as the
+final stream format instead of reverting to slow uncompressed 720p. Manual
+exposure `-6` prevents low-light correction from extending exposure beyond the
+30 FPS frame interval. The startup probe uses real frames and reports the
+selected backend, actual FOURCC, driver-reported FPS, measured FPS, exposure,
+and each property setter result. A correct-size stream below `25 FPS` emits a
+warning but still opens the preview so camera settings can be diagnosed live.
 
 The preview separates performance measurements:
 

@@ -229,6 +229,12 @@ def validate_configuration(config: dict[str, Any]) -> None:
         fourcc = str(camera.get("fourcc", ""))
         if fourcc and len(fourcc) != 4:
             raise ValueError("camera fourcc must be empty or exactly four characters")
+        if "auto_exposure" in camera and not isinstance(
+            camera["auto_exposure"], bool
+        ):
+            raise ValueError("camera auto_exposure must be true or false")
+        if "exposure" in camera and not math.isfinite(float(camera["exposure"])):
+            raise ValueError("camera exposure must be finite")
 
         robot_id = int(tags["robot_id"])
         reference_ids = [int(value) for value in tags["reference_ids"]]
@@ -366,11 +372,9 @@ def _event_rate(event_count: int, elapsed_seconds: float) -> float:
 
 def _configure_capture(capture: Any, camera_config: dict[str, Any]) -> dict[str, bool]:
     results: dict[str, bool] = {}
-    fourcc = str(camera_config.get("fourcc", ""))
-    if len(fourcc) == 4:
-        results["fourcc"] = bool(
-            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
-        )
+    # DirectShow rebuilds its stream whenever one of these properties changes.
+    # Apply FOURCC last so the final rebuild keeps MJPG instead of falling back
+    # to an uncompressed 720p mode that the C270 delivers at roughly 7-10 FPS.
     results["width"] = bool(
         capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(camera_config["width"]))
     )
@@ -380,8 +384,24 @@ def _configure_capture(capture: Any, camera_config: dict[str, Any]) -> dict[str,
     results["fps"] = bool(
         capture.set(cv2.CAP_PROP_FPS, float(camera_config["fps"]))
     )
+    fourcc = str(camera_config.get("fourcc", ""))
+    if len(fourcc) == 4:
+        results["fourcc"] = bool(
+            capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*fourcc))
+        )
     if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
         results["buffer_size"] = bool(capture.set(cv2.CAP_PROP_BUFFERSIZE, 1))
+    if "auto_exposure" in camera_config:
+        results["auto_exposure"] = bool(
+            capture.set(
+                cv2.CAP_PROP_AUTO_EXPOSURE,
+                1.0 if bool(camera_config["auto_exposure"]) else 0.0,
+            )
+        )
+    if "exposure" in camera_config:
+        results["exposure"] = bool(
+            capture.set(cv2.CAP_PROP_EXPOSURE, float(camera_config["exposure"]))
+        )
     return results
 
 
@@ -432,6 +452,7 @@ def open_camera(camera_config: dict[str, Any], override_index: int | None):
     failures: list[str] = []
 
     for backend_name, backend in _backend_candidates(preferred_backend):
+        print(f"[CAMERA] Trying {backend_name} for camera {index}...")
         capture = (
             cv2.VideoCapture(index)
             if backend is None
@@ -461,12 +482,16 @@ def open_camera(camera_config: dict[str, Any], override_index: int | None):
             "reported_fps": float(capture.get(cv2.CAP_PROP_FPS)),
             "measured_fps": probe.measured_fps,
             "fourcc": _fourcc_text(capture.get(cv2.CAP_PROP_FOURCC)),
+            "auto_exposure": float(capture.get(cv2.CAP_PROP_AUTO_EXPOSURE)),
+            "exposure": float(capture.get(cv2.CAP_PROP_EXPOSURE)),
             "set_ok": set_results,
         }
         size_matches = probe.frame_size_px == (requested_width, requested_height)
         speed_matches = probe.measured_fps >= minimum_capture_fps
-        if size_matches and speed_matches:
-            print("[CAMERA] " + json.dumps(actual, ensure_ascii=False))
+        actual["minimum_capture_fps_met"] = speed_matches
+        if size_matches:
+            prefix = "[CAMERA]" if speed_matches else "[CAMERA] WARNING slow capture"
+            print(prefix + " " + json.dumps(actual, ensure_ascii=False))
             return capture, actual
 
         capture.release()
