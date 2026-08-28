@@ -1,7 +1,7 @@
 {
   "name": "TestCase0",
   "coordinate_system": "server_x_z_units_x_east_z_north",
-  "mm_per_server_unit": 50.0,
+  "mm_per_server_unit": 87.5,
   "local_origin_server_units": [50.0, -36.0],
   "nodes": [
     { "id": 1, "x": 50.0, "z": -36.0 },

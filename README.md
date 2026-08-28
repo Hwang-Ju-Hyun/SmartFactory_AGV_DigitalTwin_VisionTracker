@@ -15,7 +15,7 @@ overhead camera -> VisionTracker -> Server -> Unity
 ## Current safety boundary
 
 - Camera preview and AprilTag ID/direction detection work.
-- TestCase0 coordinate conversion is fixed at `50 mm/server unit`.
+- TestCase0 coordinate conversion is fixed at `87.5 mm/server unit`.
 - Metric registration is fail-closed until physical anchors and tag-plane
   heights are configured.
 - Calibration collects several frames, locks one transform, saves it, and only
@@ -33,11 +33,11 @@ overhead camera -> VisionTracker -> Server -> Unity
 ## TestCase0 coordinates
 
 Node 1 is the physical local origin. The outer node-centre rectangle is
-`800 x 400 mm`.
+`1400 x 700 mm`.
 
 ```text
-local_X_mm = (server_x - 50) * 50
-local_Z_mm = (server_z + 36) * 50
+local_X_mm = (server_x - 50) * 87.5
+local_Z_mm = (server_z + 36) * 87.5
 ```
 
 The inverse conversion is included in every metric pose so later Server
@@ -111,7 +111,7 @@ At startup the tracker tries the configured Windows backend, then DSHOW, MSMF,
 and OpenCV auto selection when opening, reading, or resolution negotiation
 fails. DirectShow receives `width -> height -> FPS -> MJPG`, keeping MJPG as the
 final stream format instead of reverting to slow uncompressed 720p. Manual
-exposure `-6` prevents low-light correction from extending exposure beyond the
+exposure `-4` prevents low-light correction from extending exposure beyond the
 30 FPS frame interval. The startup probe uses real frames and reports the
 selected backend, actual FOURCC, driver-reported FPS, measured FPS, exposure,
 and each property setter result. A correct-size stream below `25 FPS` emits a

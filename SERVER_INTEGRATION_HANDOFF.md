@@ -53,7 +53,7 @@ explicitly runs with Server output disabled.
 
 - Canonical source snapshot: `testcase0_map.json`
 - Server axes: `x` east, `z` north
-- Scale: `50.0 mm` per Server map unit
+- Scale: `87.5 mm` per Server map unit
 - Local metric origin: Server node 1 at `(50, -36)`
 - Conversion:
 

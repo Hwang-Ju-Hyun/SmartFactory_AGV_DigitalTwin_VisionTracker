@@ -255,7 +255,7 @@ class VisionPreviewGateTest(unittest.TestCase):
             (1280, 720, 30, "MJPG"),
         )
         self.assertFalse(camera["auto_exposure"])
-        self.assertEqual(camera["exposure"], -6.0)
+        self.assertEqual(camera["exposure"], -4.0)
 
     def test_open_camera_keeps_mjpg_as_final_stream_setting(self):
         capture = ConfigurableFakeCapture()
@@ -281,7 +281,7 @@ class VisionPreviewGateTest(unittest.TestCase):
                 cv2.CAP_PROP_AUTO_EXPOSURE,
             ],
         )
-        self.assertEqual(capture.set_calls[6], (cv2.CAP_PROP_EXPOSURE, -6.0))
+        self.assertEqual(capture.set_calls[6], (cv2.CAP_PROP_EXPOSURE, -4.0))
         self.assertEqual((actual["width"], actual["height"]), (1280, 720))
         self.assertAlmostEqual(actual["measured_fps"], 29.8)
         self.assertEqual(actual["fourcc"], "MJPG")

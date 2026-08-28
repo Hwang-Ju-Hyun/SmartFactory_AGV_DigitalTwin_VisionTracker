@@ -22,9 +22,9 @@ class VisionMapTest(unittest.TestCase):
 
     def test_testcase0_corner_nodes(self):
         self.assertLocal(1, 0.0, 0.0)
-        self.assertLocal(5, 800.0, 0.0)
-        self.assertLocal(15, 800.0, 400.0)
-        self.assertLocal(11, 0.0, 400.0)
+        self.assertLocal(5, 1400.0, 0.0)
+        self.assertLocal(15, 1400.0, 700.0)
+        self.assertLocal(11, 0.0, 700.0)
 
     def test_round_trip_server_and_local_coordinates(self):
         for node in self.contract.nodes.values():
@@ -36,13 +36,13 @@ class VisionMapTest(unittest.TestCase):
     def test_local_bounds_and_containment(self):
         self.assertEqual(
             self.contract.local_bounds_mm(),
-            (0.0, 800.0, 0.0, 400.0),
+            (0.0, 1400.0, 0.0, 700.0),
         )
         self.assertTrue(self.contract.contains_local_mm(0.0, 0.0))
-        self.assertTrue(self.contract.contains_local_mm(800.0, 400.0))
-        self.assertFalse(self.contract.contains_local_mm(-0.01, 200.0))
-        self.assertTrue(self.contract.contains_local_mm(-50.0, 450.0, 50.0))
-        self.assertFalse(self.contract.contains_local_mm(-50.01, 450.0, 50.0))
+        self.assertTrue(self.contract.contains_local_mm(1400.0, 700.0))
+        self.assertFalse(self.contract.contains_local_mm(-0.01, 350.0))
+        self.assertTrue(self.contract.contains_local_mm(-50.0, 750.0, 50.0))
+        self.assertFalse(self.contract.contains_local_mm(-50.01, 750.0, 50.0))
 
     def test_contract_id_is_stable_and_order_independent(self):
         contract_id = self.contract.contract_id
@@ -114,7 +114,7 @@ class VisionMapTest(unittest.TestCase):
             }
         )
         self.assertEqual(sorted(positions), [1, 2, 3, 4])
-        self.assertEqual(positions[2].tolist(), [800.0, 0.0])
+        self.assertEqual(positions[2].tolist(), [1400.0, 0.0])
 
     def test_reference_requires_exactly_one_position_source(self):
         invalid_anchors = (
