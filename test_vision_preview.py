@@ -9,6 +9,19 @@ import cv2
 import numpy as np
 
 from vision_map import MapContract
+from pose_tracker import MetricMeasurement, MetricPose, PoseEstimate, PoseState
+from vision_calibration import CalibrationUseState, VerificationResult
+from vision_server_client import (
+    QUALITY_CALIBRATION_RMS_ERROR,
+    QUALITY_DECISION_MARGIN,
+    QUALITY_VERIFICATION_AGE,
+    QUALITY_VERIFICATION_COVERAGE,
+    QUALITY_VERIFICATION_MAX_ERROR,
+    QUALITY_VERIFICATION_REFERENCE_COUNT,
+    QUALITY_VERIFICATION_RMS_ERROR,
+    VisionTrackingState,
+    VisionVerificationState,
+)
 from vision_tracker_preview import (
     CameraProbeResult,
     LatestFrameReader,
@@ -16,9 +29,11 @@ from vision_tracker_preview import (
     _event_rate,
     _probe_capture,
     annotate_frame,
+    build_server_observation,
     load_config,
     open_camera,
     require_frame_size,
+    run_camera,
     validate_configuration,
 )
 
@@ -232,6 +247,209 @@ class VisionPreviewGateTest(unittest.TestCase):
         config["map"]["coordinate_system"] = "heading_cw"
         with self.assertRaisesRegex(SystemExit, "coordinate_system"):
             validate_configuration(config)
+
+    def test_invalid_server_transport_config_is_rejected(self):
+        config = deepcopy(self.config)
+        config["server"]["source_id"] = 0
+        with self.assertRaisesRegex(SystemExit, "source_id"):
+            validate_configuration(config)
+
+    def test_measured_pose_maps_to_verified_server_observation(self):
+        pose = MetricPose(123.0, -45.0, 90.0)
+        measurement = MetricMeasurement(
+            sequence=8,
+            received_monotonic_s=10.0,
+            pose=pose,
+            decision_margin=52.0,
+            calibration_id="cal-test",
+            calibration_rms_error_mm=2.0,
+        )
+        estimate = PoseEstimate(
+            state=PoseState.MEASURED,
+            pose=pose,
+            measurement_age_ms=8.4,
+            measured_at_s=10.0,
+            source_sequence=8,
+            calibration_id="cal-test",
+            fresh=True,
+        )
+        calibration = SimpleNamespace(
+            calibration_id="cal-test",
+            quality=SimpleNamespace(rms_error_mm=2.0),
+        )
+        verification = VerificationResult(
+            available=True,
+            passed=True,
+            matched_count=6,
+            rms_error_mm=1.5,
+            max_error_mm=3.0,
+            coverage_ratio=0.8,
+        )
+        output = build_server_observation(
+            estimate,
+            calibration=calibration,
+            calibration_state=CalibrationUseState.VERIFIED,
+            verification=verification,
+            verification_age_s=0.02,
+            measurement=measurement,
+        )
+        self.assertEqual(output.state, VisionTrackingState.MEASURED)
+        self.assertEqual(output.verification_state, VisionVerificationState.VERIFIED)
+        self.assertEqual(output.source_timestamp_us, 10_000_000)
+        self.assertEqual(output.reported_age_ms, 8)
+        self.assertEqual((output.x_mm, output.z_mm, output.heading_deg), (123.0, -45.0, 90.0))
+        expected_fields = (
+            QUALITY_DECISION_MARGIN
+            | QUALITY_CALIBRATION_RMS_ERROR
+            | QUALITY_VERIFICATION_REFERENCE_COUNT
+            | QUALITY_VERIFICATION_RMS_ERROR
+            | QUALITY_VERIFICATION_MAX_ERROR
+            | QUALITY_VERIFICATION_COVERAGE
+            | QUALITY_VERIFICATION_AGE
+        )
+        self.assertEqual(output.quality.quality_fields, expected_fields)
+        self.assertEqual(output.quality.verification_age_ms, 20)
+
+    def test_initial_lost_uses_locked_calibration_without_pose(self):
+        estimate = PoseEstimate(
+            state=PoseState.LOST,
+            pose=None,
+            measurement_age_ms=None,
+            measured_at_s=None,
+            source_sequence=None,
+            calibration_id=None,
+            fresh=False,
+        )
+        calibration = SimpleNamespace(
+            calibration_id="cal-test",
+            quality=SimpleNamespace(rms_error_mm=2.0),
+        )
+        output = build_server_observation(
+            estimate,
+            calibration=calibration,
+            calibration_state=CalibrationUseState.AWAITING_VERIFICATION,
+            verification=None,
+            verification_age_s=None,
+            measurement=None,
+        )
+        self.assertEqual(output.state, VisionTrackingState.LOST)
+        self.assertEqual(
+            output.verification_state,
+            VisionVerificationState.AWAITING_VERIFICATION,
+        )
+        self.assertEqual(output.calibration_id, "cal-test")
+        self.assertEqual(output.source_timestamp_us, 0)
+        self.assertEqual(output.reported_age_ms, 0)
+        self.assertIsNone(output.x_mm)
+
+    def test_camera_loop_publishes_only_through_compatible_calibration_client(self):
+        frame = np.zeros((240, 320, 3), dtype=np.uint8)
+        capture = FiniteFakeCapture([frame])
+        calibration = SimpleNamespace(
+            calibration_id="cal-test",
+            pose_contract_id="pose-contract-test",
+            homography=np.eye(3),
+            quality=SimpleNamespace(rms_error_mm=2.0),
+        )
+
+        class FakeGuard:
+            def __init__(self):
+                self.calibration = calibration
+
+            def update(self, _now_s, _verification):
+                pass
+
+            def state(self, _now_s):
+                return CalibrationUseState.VERIFIED
+
+            def usable_homography(self, _now_s):
+                return np.eye(3)
+
+            def verification_age_s(self, _now_s):
+                return 0.0
+
+        class FakeServerClient:
+            instances = []
+
+            def __init__(self, _config, **identities):
+                self.calibration_id = identities["calibration_id"]
+                self.identities = identities
+                self.started = False
+                self.closed = False
+                self.published = []
+                self.instances.append(self)
+
+            def start(self):
+                self.started = True
+
+            def publish(self, observation):
+                self.published.append(observation)
+
+            def close(self):
+                self.closed = True
+
+        verification = VerificationResult(
+            available=True,
+            passed=True,
+            matched_count=6,
+            rms_error_mm=1.0,
+            max_error_mm=2.0,
+            coverage_ratio=1.0,
+        )
+        reported_camera = {
+            "width": 320,
+            "height": 240,
+            "measured_fps": 30.0,
+        }
+        with (
+            patch("vision_tracker_preview.open_camera", return_value=(capture, reported_camera)),
+            patch(
+                "vision_tracker_preview.load_compatible_calibration_guard",
+                return_value=FakeGuard(),
+            ),
+            patch("vision_tracker_preview.verify_locked_calibration", return_value=verification),
+            patch("vision_tracker_preview.observations_from_frame", return_value=[]),
+            patch("vision_tracker_preview.VisionServerClient", FakeServerClient),
+            patch.object(cv2, "namedWindow"),
+            patch.object(cv2, "resizeWindow"),
+            patch.object(cv2, "imshow"),
+            patch.object(cv2, "waitKey", return_value=ord("q")),
+            patch.object(cv2, "destroyAllWindows"),
+        ):
+            run_camera(object(), deepcopy(self.config), None)
+
+        self.assertEqual(len(FakeServerClient.instances), 1)
+        client = FakeServerClient.instances[0]
+        self.assertTrue(client.started)
+        self.assertTrue(client.closed)
+        self.assertEqual(client.identities["map_contract_id"], self.map_contract.contract_id)
+        self.assertEqual(client.identities["pose_contract_id"], "pose-contract-test")
+        self.assertEqual(len(client.published), 1)
+        self.assertEqual(client.published[0].state, VisionTrackingState.LOST)
+
+    def test_camera_loop_never_starts_sender_without_compatible_calibration(self):
+        capture = FiniteFakeCapture([np.zeros((240, 320, 3), dtype=np.uint8)])
+        reported_camera = {
+            "width": 320,
+            "height": 240,
+            "measured_fps": 30.0,
+        }
+        with (
+            patch("vision_tracker_preview.open_camera", return_value=(capture, reported_camera)),
+            patch(
+                "vision_tracker_preview.load_compatible_calibration_guard",
+                return_value=None,
+            ),
+            patch("vision_tracker_preview.observations_from_frame", return_value=[]),
+            patch("vision_tracker_preview.VisionServerClient") as server_client,
+            patch.object(cv2, "namedWindow"),
+            patch.object(cv2, "resizeWindow"),
+            patch.object(cv2, "imshow"),
+            patch.object(cv2, "waitKey", return_value=ord("q")),
+            patch.object(cv2, "destroyAllWindows"),
+        ):
+            run_camera(object(), deepcopy(self.config), None)
+        server_client.assert_not_called()
 
     def test_camera_reader_discards_backlog_and_returns_latest_frame(self):
         frames = [

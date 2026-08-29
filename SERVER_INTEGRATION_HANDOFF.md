@@ -34,8 +34,12 @@ Windows webcam
   -> MEASURED / HELD / LOST observation
 ```
 
-There is currently no Server socket transport in this repository. The preview
-explicitly runs with Server output disabled.
+`vision_server_client.py` implements the Server's canonical RobotProtocol
+Vision channel. A background thread performs `VISION_HELLO`/ACK, coalesces
+pending camera results to the latest snapshot, preserves a strictly increasing
+observation sequence across reconnects, and sends `MEASURED`/`HELD`/`LOST`.
+It is created only for a statically compatible locked calibration. The camera
+thread never blocks on socket I/O.
 
 ## Files to read first
 
@@ -53,7 +57,7 @@ explicitly runs with Server output disabled.
 
 - Canonical source snapshot: `testcase0_map.json`
 - Server axes: `x` east, `z` north
-- Scale: `87.5 mm` per Server map unit
+- Scale: `50 mm` per Server map unit
 - Local metric origin: Server node 1 at `(50, -36)`
 - Conversion:
 
@@ -68,9 +72,9 @@ server_z   = local_z_mm / 50 - 36
 - The map semantic digest is stored with calibration data. A calibration for a
   different map contract is rejected.
 
-The JSON snapshot is not a substitute for checking the active Server map. A
-future integration should compare an explicit Server-provided map/config
-identity rather than assuming local files stayed synchronized.
+The JSON snapshot is not a substitute for checking the active Server map.
+`VISION_HELLO` carries the map and pose contract IDs; the Server validates its
+active canonical map at startup and rejects a mismatched HELLO.
 
 ## Current physical measurements
 
@@ -86,26 +90,27 @@ These are recorded in `vision_config.json`.
 
 ## Deliberately incomplete physical calibration
 
-The final webcam has not arrived or been mounted. Therefore:
-
-- reference tag anchors ID 1-8 are still `null`;
-- `reference_plane_height_mm` is still `null`;
-- `vision_calibration.json` has not been generated;
-- no trusted metric pose should be emitted yet.
+The 35 cm configuration now contains six reference anchors and records both
+tag planes as 90 mm. A local, ignored `vision_calibration.json` can be used only
+when its static contract checks and live fixed-reference verification both
+pass; moving the camera or changing the map rejects it. The configured 90 mm
+reference height must match the physical installation, not merely the JSON.
+Floor references and a 90 mm robot tag are different planes and must not be
+calibrated as though they were equal.
 
 The planar V1 requires fixed reference tags and the robot tag to be at the same
 physical height. Floor references combined with a robot-roof tag introduce
 parallax and are rejected. At least five well-spread, non-collinear reference
 tags are required; six to eight are preferred.
 
-## Observation semantics for future Server integration
+## Observation semantics for Server integration
 
 - `MEASURED`: a calibrated observation received by the host within the maximum
   fresh-age limit
 - `HELD`: a short, explicitly stale carry-forward used only for display
 - `LOST`: no pose; consumers must not reuse an old coordinate as current
 
-Any future transport should carry, at minimum:
+The transport carries:
 
 ```text
 agv_id
@@ -119,13 +124,12 @@ map contract identity
 quality/verification metadata
 ```
 
-A process-local monotonic timestamp is not automatically comparable across the
-Windows sender and WSL Server. Specify timestamp semantics explicitly and use
-the Server's receive time for its own freshness timeout.
+A process-local monotonic timestamp is not compared across the Windows sender
+and WSL Server. The Server uses its own receive time for freshness timeout.
 
-Before defining packet numbers or layouts, inspect the Server's canonical
-`Shared/Protocol.hpp` and `Shared/PacketSerializer.*`. Preserve field-by-field
-serialization; do not transmit raw C++ structs.
+The implemented wire layout matches the Server's canonical
+`Shared/Protocol.hpp` and `Shared/PacketSerializer.*`; Python serializes each
+little-endian field explicitly and never transmits a native struct.
 
 ## Recommended Server ownership boundary
 
@@ -141,7 +145,7 @@ wrong map/calibration identities, stale or reordered sequences, out-of-bounds
 poses, and invalid state/pose combinations. Do not use a Vision observation to
 alter motion or arrival state until real-camera accuracy has been measured.
 
-## Required physical validation before network integration
+## Required physical validation before control use or final demonstration
 
 1. Mount and lock the final camera.
 2. Mount at least five references at the measured robot-tag height.
@@ -150,20 +154,20 @@ alter motion or arrival state until real-camera accuracy has been measured.
 5. Measure static position and heading error at several known nodes/headings.
 6. Measure detection loss and latency while the robot moves.
 
-Only after those measurements should the Python-to-Server packet contract be
-finalized and Unity display work begin.
+The observation-only path can be exercised before those measurements, but no
+Vision pose should affect arrival, replanning, or motor control until they pass.
 
-The user explicitly does not want a standalone fake/mock Vision sender merely
-because the final camera has not arrived. Wait for the real calibrated output;
-ordinary isolated unit-test fixtures are still appropriate.
+The runtime sender consumes only the real calibrated preview pipeline. The
+local fake TCP peer in unit tests verifies framing, fragmented ACK handling,
+latest-only delivery, reconnect, and non-reused transport sequences; it is not
+a runtime pose source.
 
 ## Verification
 
 From Windows PowerShell in the VisionTracker repository:
 
 ```powershell
-py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview
+py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview test_vision_server_client
 ```
 
-The reviewed baseline has 61 unit tests and does not connect to the Server or
-send robot commands.
+The runtime transport sends observations only and cannot send robot commands.

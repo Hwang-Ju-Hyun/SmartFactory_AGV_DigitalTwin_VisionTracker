@@ -35,12 +35,12 @@
     "reference_plane_height_mm": 90.0,
     "robot_tag_height_mm": 90.0,
     "reference_tag_anchors": {
-      "1": { "server_units": [48.285714285714285, -37.714285714285715] },
-      "3": { "server_units": [67.71428571428571, -37.714285714285715] },
-      "5": { "server_units": [67.71428571428571, -26.285714285714285] },
-      "6": { "server_units": [58.0, -26.285714285714285] },
-      "7": { "server_units": [48.285714285714285, -26.285714285714285] },
-      "8": { "server_units": [58.0, -37.714285714285715] }
+      "1": { "server_units": [47.0, -39.0] },
+      "3": { "server_units": [81.0, -39.0] },
+      "5": { "server_units": [81.0, -19.0] },
+      "6": { "server_units": [64.0, -19.0] },
+      "7": { "server_units": [47.0, -19.0] },
+      "8": { "server_units": [64.0, -39.0] }
     }
   },
   "calibration": {
@@ -61,6 +61,15 @@
     "hold_seconds": 0.2,
     "maximum_fresh_age_seconds": 0.1,
     "allowed_map_margin_mm": 100.0
+  },
+  "server": {
+    "enabled": true,
+    "host": "127.0.0.1",
+    "port": 6666,
+    "source_id": 1,
+    "agv_id": 1,
+    "connect_timeout_seconds": 1.0,
+    "reconnect_delay_seconds": 1.0
   },
   "display": {
     "console_period_seconds": 0.5,

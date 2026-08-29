@@ -8,14 +8,12 @@ used by the Server, so encoder drift can be measured and visualized in Unity.
 
 ```text
 overhead camera -> VisionTracker -> Server -> Unity
-                        ^
-                        `-- Server transport is deliberately disabled for now
 ```
 
 ## Current safety boundary
 
 - Camera preview and AprilTag ID/direction detection work.
-- TestCase0 coordinate conversion is fixed at `87.5 mm/server unit`.
+- TestCase0 coordinate conversion is fixed at `50 mm/server unit`.
 - Metric registration is fail-closed until physical anchors and tag-plane
   heights are configured.
 - Calibration collects several frames, locks one transform, saves it, and only
@@ -28,7 +26,10 @@ overhead camera -> VisionTracker -> Server -> Unity
 - Poses outside the TestCase0 region plus a small configured margin are rejected.
 - A dedicated camera thread continuously drains the webcam and retains only the
   newest host-received frame; processing never walks through an old FIFO backlog.
-- The program does not connect to the Server and cannot command the ESP32.
+- A latest-only background TCP sender connects only while a statically
+  compatible locked calibration exists. Camera processing never waits for the
+  Server, and reconnects do not replay a stale frame queue.
+- Server output is observation-only and cannot command the ESP32.
 
 ## TestCase0 coordinates
 
@@ -36,8 +37,8 @@ Node 1 is the physical local origin. The outer node-centre rectangle is
 `1400 x 700 mm`.
 
 ```text
-local_X_mm = (server_x - 50) * 87.5
-local_Z_mm = (server_z + 36) * 87.5
+local_X_mm = (server_x - 50) * 50
+local_Z_mm = (server_z + 36) * 50
 ```
 
 The inverse conversion is included in every metric pose so later Server
@@ -45,8 +46,8 @@ integration does not guess units.
 
 `testcase0_map.json` is a reviewed snapshot of the current Server map, not a
 live synchronization mechanism. Its semantic digest is bound into every
-calibration, so editing the local map invalidates that calibration. A later
-Server transport must also compare a Server-owned map/version identifier.
+calibration, so editing the local map invalidates that calibration. The Vision
+HELLO carries the map and pose contract IDs, and the Server rejects a mismatch.
 
 ## Before metric calibration
 
@@ -68,7 +69,7 @@ Server transport must also compare a Server-owned map/version identifier.
 6. Run the preview and press `c`. Do not move the camera or tags while 30
    samples per reference are collected.
 7. Validate position and heading at several known nodes before adding any
-   Server network transport.
+   control use. The network transport keeps observations separate from control.
 
 ## Run
 
@@ -78,6 +79,20 @@ Python 3.12 is the verified interpreter.
 py -3.12 -m pip install -r requirements-vision.txt
 py -3.12 vision_tracker_preview.py
 ```
+
+`vision_config.json` enables the observation sender for
+`127.0.0.1:6666`, source 1, AGV 1. It remains dormant without a compatible
+locked calibration. Start the Server with the exact ID printed after pressing
+`c`:
+
+```bash
+./build/Server/AGV_Server --physical-fleet --vision-observation \
+  --vision-calibration-id <LOCKED_CALIBRATION_ID>
+```
+
+Set `server.enabled` to `false` for camera-only work, or change `server.host`
+when the Server is not reachable through localhost. `--image` inspection never
+opens a Server connection.
 
 Controls:
 
@@ -133,6 +148,6 @@ new calibration after adopting the 720p profile.
 ## Offline verification
 
 ```powershell
-py -3.12 -m py_compile vision_tracker_preview.py vision_geometry.py vision_map.py vision_calibration.py pose_tracker.py
-py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview
+py -3.12 -m py_compile vision_tracker_preview.py vision_server_client.py vision_geometry.py vision_map.py vision_calibration.py pose_tracker.py
+py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview test_vision_server_client
 ```

@@ -1,7 +1,7 @@
 """AprilTag VisionTracker preview for the SmartFactory AGV project.
 
-This program deliberately stops at observation and coordinate conversion. It
-does not connect to the Server and cannot send commands to the ESP32.
+This program publishes calibrated observations to the Server when the optional
+transport is enabled. It cannot send commands to the ESP32.
 """
 
 from __future__ import annotations
@@ -29,10 +29,26 @@ from vision_calibration import (
     CalibrationUseState,
     LockedCalibrationGuard,
     PlanarCalibration,
+    VerificationResult,
     build_planar_calibration,
     require_same_measurement_plane,
     validate_calibration_compatibility,
     verify_locked_calibration,
+)
+from vision_server_client import (
+    QUALITY_CALIBRATION_RMS_ERROR,
+    QUALITY_DECISION_MARGIN,
+    QUALITY_VERIFICATION_AGE,
+    QUALITY_VERIFICATION_COVERAGE,
+    QUALITY_VERIFICATION_MAX_ERROR,
+    QUALITY_VERIFICATION_REFERENCE_COUNT,
+    QUALITY_VERIFICATION_RMS_ERROR,
+    VisionObservation,
+    VisionQuality,
+    VisionServerClient,
+    VisionServerConfig,
+    VisionTrackingState,
+    VisionVerificationState,
 )
 from vision_geometry import (
     image_heading_degrees,
@@ -187,6 +203,7 @@ def load_config(path: Path) -> dict[str, Any]:
         "calibration",
         "tracking",
         "display",
+        "server",
     ):
         if section not in config:
             raise SystemExit(f"[VISION] Config is missing section: {section}")
@@ -204,6 +221,7 @@ def validate_configuration(config: dict[str, Any]) -> None:
         tags = config["tags"]
         calibration = config["calibration"]
         tracking = config["tracking"]
+        server = config["server"]
 
         if int(camera["index"]) < 0:
             raise ValueError("camera index must be non-negative")
@@ -304,6 +322,17 @@ def validate_configuration(config: dict[str, Any]) -> None:
             raise ValueError("hold_seconds must be at least the non-negative fresh age")
         if map_margin < 0.0:
             raise ValueError("allowed_map_margin_mm must be non-negative")
+
+        if not isinstance(server["enabled"], bool):
+            raise ValueError("server enabled must be true or false")
+        VisionServerConfig(
+            host=str(server["host"]),
+            port=int(server["port"]),
+            source_id=int(server["source_id"]),
+            agv_id=int(server["agv_id"]),
+            connect_timeout_seconds=float(server["connect_timeout_seconds"]),
+            reconnect_delay_seconds=float(server["reconnect_delay_seconds"]),
+        )
     except (KeyError, TypeError, ValueError, OverflowError) as error:
         raise SystemExit(f"[VISION] Invalid config: {error}") from error
 
@@ -952,6 +981,93 @@ def pose_estimate_record(
     return record
 
 
+def build_server_observation(
+    estimate: PoseEstimate,
+    *,
+    calibration: PlanarCalibration,
+    calibration_state: CalibrationUseState,
+    verification: VerificationResult | None,
+    verification_age_s: float | None,
+    measurement: MetricMeasurement | None,
+) -> VisionObservation:
+    """Map a fail-closed tracker result to the canonical Server wire model."""
+
+    tracking_state = VisionTrackingState[estimate.state.value]
+    verification_state = VisionVerificationState[calibration_state.value]
+    source_timestamp_us = (
+        0
+        if estimate.measured_at_s is None
+        else max(0, int(round(estimate.measured_at_s * 1_000_000.0)))
+    )
+    reported_age_ms = (
+        0
+        if estimate.measurement_age_ms is None
+        else min(0xFFFFFFFF, max(0, int(round(estimate.measurement_age_ms))))
+    )
+
+    fields = QUALITY_CALIBRATION_RMS_ERROR
+    decision_margin = 0.0
+    if tracking_state == VisionTrackingState.MEASURED and measurement is not None:
+        fields |= QUALITY_DECISION_MARGIN
+        decision_margin = float(measurement.decision_margin)
+
+    reference_count = 0
+    verification_rms = 0.0
+    verification_max = 0.0
+    verification_coverage = 0.0
+    if verification is not None:
+        fields |= QUALITY_VERIFICATION_REFERENCE_COUNT
+        reference_count = int(verification.matched_count)
+        if verification.rms_error_mm is not None:
+            fields |= QUALITY_VERIFICATION_RMS_ERROR
+            verification_rms = float(verification.rms_error_mm)
+        if verification.max_error_mm is not None:
+            fields |= QUALITY_VERIFICATION_MAX_ERROR
+            verification_max = float(verification.max_error_mm)
+        if verification.coverage_ratio is not None:
+            fields |= QUALITY_VERIFICATION_COVERAGE
+            verification_coverage = float(verification.coverage_ratio)
+
+    verification_age_ms = 0
+    if verification_age_s is not None:
+        fields |= QUALITY_VERIFICATION_AGE
+        verification_age_ms = min(
+            0xFFFFFFFF,
+            max(0, int(round(float(verification_age_s) * 1000.0))),
+        )
+
+    pose_values: dict[str, float | None] = {
+        "x_mm": None,
+        "z_mm": None,
+        "heading_deg": None,
+    }
+    if estimate.pose is not None:
+        pose_values = {
+            "x_mm": float(estimate.pose.x_mm),
+            "z_mm": float(estimate.pose.z_mm),
+            "heading_deg": float(estimate.pose.heading_deg),
+        }
+
+    return VisionObservation(
+        source_timestamp_us=source_timestamp_us,
+        reported_age_ms=reported_age_ms,
+        state=tracking_state,
+        calibration_id=calibration.calibration_id,
+        verification_state=verification_state,
+        quality=VisionQuality(
+            quality_fields=fields,
+            decision_margin=decision_margin,
+            calibration_rms_error_mm=float(calibration.quality.rms_error_mm),
+            verification_reference_count=reference_count,
+            verification_rms_error_mm=verification_rms,
+            verification_max_error_mm=verification_max,
+            verification_coverage_ratio=verification_coverage,
+            verification_age_ms=verification_age_ms,
+        ),
+        **pose_values,
+    )
+
+
 def save_frames(raw_frame: np.ndarray, annotated_frame: np.ndarray) -> None:
     output_dir = BASE_DIR / "captures"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -1093,6 +1209,17 @@ def run_camera(
     calibration_config = config["calibration"]
     map_contract = load_map_contract(config)
     reference_positions = configured_reference_positions(config, map_contract)
+    server_settings = config["server"]
+    server_config = VisionServerConfig(
+        host=str(server_settings["host"]),
+        port=int(server_settings["port"]),
+        source_id=int(server_settings["source_id"]),
+        agv_id=int(server_settings["agv_id"]),
+        connect_timeout_seconds=float(server_settings["connect_timeout_seconds"]),
+        reconnect_delay_seconds=float(server_settings["reconnect_delay_seconds"]),
+    )
+    server_enabled = bool(server_settings["enabled"])
+    server_client: VisionServerClient | None = None
     image_size: tuple[int, int] | None = None
     guard: LockedCalibrationGuard | None = None
     collector: CalibrationCollector | None = None
@@ -1269,7 +1396,9 @@ def run_camera(
                         print(f"[CALIBRATION] Rejected: {error}")
                     collector = None
 
+            verification: VerificationResult | None = None
             verification_age = None
+            calibration_use_state: CalibrationUseState | None = None
             calibration = guard.calibration if guard is not None else None
             verification_now_s = time.perf_counter()
             if guard is not None:
@@ -1289,7 +1418,8 @@ def run_camera(
                     ),
                 )
                 guard.update(verification_now_s, verification)
-                calibration_state = guard.state(verification_now_s).value
+                calibration_use_state = guard.state(verification_now_s)
+                calibration_state = calibration_use_state.value
                 map_homography = guard.usable_homography(verification_now_s)
                 verification_age = guard.verification_age_s(verification_now_s)
             elif collector is not None:
@@ -1307,6 +1437,28 @@ def run_camera(
             else:
                 calibration_state = "NO_CALIBRATION"
                 map_homography = None
+
+            active_calibration_id = (
+                calibration.calibration_id if calibration is not None else None
+            )
+            if server_client is not None and (
+                not server_enabled
+                or active_calibration_id != server_client.calibration_id
+            ):
+                server_client.close()
+                server_client = None
+            if (
+                server_enabled
+                and calibration is not None
+                and server_client is None
+            ):
+                server_client = VisionServerClient(
+                    server_config,
+                    map_contract_id=map_contract.contract_id,
+                    pose_contract_id=calibration.pose_contract_id,
+                    calibration_id=calibration.calibration_id,
+                )
+                server_client.start()
 
             annotated, robot_record = annotate_frame(
                 frame,
@@ -1343,6 +1495,21 @@ def run_camera(
                 )
             estimate = pose_tracker.update(evaluation_now_s, measurement)
             draw_pose_estimate(annotated, estimate, map_contract)
+            if (
+                server_client is not None
+                and calibration is not None
+                and calibration_use_state is not None
+            ):
+                server_client.publish(
+                    build_server_observation(
+                        estimate,
+                        calibration=calibration,
+                        calibration_state=calibration_use_state,
+                        verification=verification,
+                        verification_age_s=verification_age,
+                        measurement=measurement,
+                    )
+                )
 
             counts = Counter(
                 observation.tag_id
@@ -1410,6 +1577,8 @@ def run_camera(
     except KeyboardInterrupt:
         print("\n[VISION] Interrupted")
     finally:
+        if server_client is not None:
+            server_client.close()
         frame_reader.close()
         cv2.destroyAllWindows()
 
@@ -1420,7 +1589,8 @@ def main() -> None:
     detector = build_detector(config)
     print(
         f"[VISION] family={config['detector']['families']} robot_id={config['tags']['robot_id']} "
-        f"tag_size_mm={config['tags']['tag_size_mm']} server=DISABLED"
+        f"tag_size_mm={config['tags']['tag_size_mm']} "
+        f"server={'ENABLED' if config['server']['enabled'] else 'DISABLED'}"
     )
     if args.image is not None:
         run_single_image(args.image.resolve(), detector, config)

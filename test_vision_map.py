@@ -46,8 +46,7 @@ class VisionMapTest(unittest.TestCase):
 
     def test_contract_id_is_stable_and_order_independent(self):
         contract_id = self.contract.contract_id
-        self.assertEqual(len(contract_id), 16)
-        int(contract_id, 16)
+        self.assertEqual(contract_id, "67254eca75c55e5c")
 
         reversed_nodes = dict(reversed(list(self.contract.nodes.items())))
         reordered = replace(self.contract, nodes=reversed_nodes)

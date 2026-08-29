@@ -27,35 +27,31 @@ closed-loop motor correction source.
 - separate camera-delivery, full-processing, and AprilTag-detection performance
   measurements so skipped frames are counted correctly
 - `MEASURED`, explicitly stale `HELD`, and pose-free `LOST` states
-- no Server, Unity, ESP32, or motor-control connection
+- observation-only Server TCP sender with HELLO/ACK, latest-only coalescing,
+  reconnect, and explicit MEASURED/HELD/LOST packets
+- no direct Unity, ESP32, arrival, replanning, or motor-control connection
 
 ## Physical information still required
 
-- final camera and rigid mounting
-- actual accepted resolution/FPS
-- final tag ID to map-anchor assignments
-- measured reference and robot tag-plane heights
-- measured ID 0 heading alignment and tag-centre-to-Server-origin offset
-- a locked calibration created after installation
+- confirmation that the latest camera placement is rigid and final
+- confirmation that fixed references really share the robot tag's 90 mm plane
+- live fixed-reference verification of the local locked 35 cm calibration
 - measured node-position and heading error across the map
-- C270 hardware confirmation that the selected backend sustains approximately
-  30 FPS under the final overhead lighting
+- moving-robot loss and end-to-end latency measurements
 
 `vision_config.json` records the current chassis measurement: the ID 0 surface
 is approximately 90 mm above the floor, its printed front is aligned with the
-chassis front, and its centre is over the drive-wheel axle midpoint. Reference
-anchors and the reference-plane height remain null until the final camera and
-physical reference mounts are installed.
-Therefore the current committed configuration cannot produce a trusted metric
-pose by accident.
+chassis front, and its centre is over the drive-wheel axle midpoint. It also
+contains six anchors and a 90 mm reference plane. Software cannot verify that
+physical height, so floor references must be raised or a later 3D model must
+compensate the plane difference.
 
 ## Known limitation
 
 The webcam lens is not intrinsically calibrated. A planar homography cannot
-fully remove radial lens distortion. The current version must remain
-Server-disabled until known-node error is measured. Checkerboard assets are
-included for the camera-specific calibration step after the final camera
-arrives.
+fully remove radial lens distortion. Server integration must remain
+observation-only until known-node error is measured. Checkerboard assets are
+included for camera-specific calibration.
 
 Floor reference tags and a robot tag on top of the chassis are different
 planes. The first version requires equal heights. A later version may instead
@@ -63,8 +59,8 @@ use camera intrinsics/extrinsics plus measured robot-tag height for parallax
 compensation.
 
 The committed TestCase0 JSON is a local Server-map snapshot. Its digest protects
-calibrations from local edits, but it cannot detect a future Server repository
-map change until the network protocol carries a Server-owned map/version ID.
+calibrations from local edits. The Vision HELLO also carries map and pose
+contract IDs, which the Server checks against its active canonical map.
 
 ## Next gate
 
@@ -73,5 +69,6 @@ After the Logitech camera is fixed:
 1. enter physical anchors and heights;
 2. create and verify a locked calibration;
 3. measure errors at multiple nodes and headings;
-4. only if those errors are acceptable, define the VisionTracker-to-Server
-   observation packet and add Unity planned-vs-actual display.
+4. run the Server with the newly locked calibration ID and verify that
+   MEASURED/HELD/LOST observations do not affect robot control;
+5. verify Unity planned-vs-actual display end to end.
