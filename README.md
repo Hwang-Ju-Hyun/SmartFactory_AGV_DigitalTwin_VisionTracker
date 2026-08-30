@@ -64,7 +64,7 @@ HELLO carries the map and pose contract IDs, and the Server rejects a mismatch.
 5. Measure the printed-top-to-chassis heading correction and the vector from
    the ID 0 centre to the Server AGV origin. Enter `[forward_mm, left_mm]` in
    `tag_center_to_robot_origin_body_mm`. The current chassis measurement is a
-   90 mm robot-tag height, 0 degree heading correction, and `[0, 0]` because
+   90 mm robot-tag height, 180 degree heading correction, and `[0, 0]` because
    ID 0 is centred over the drive-wheel axle midpoint.
 6. Run the preview and press `c`. Do not move the camera or tags while 30
    samples per reference are collected.

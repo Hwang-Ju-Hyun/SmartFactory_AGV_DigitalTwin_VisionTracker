@@ -91,6 +91,23 @@ def fit_pixel_to_map_homography(
     if not math.isfinite(threshold) or threshold <= 0.0:
         raise ValueError("RANSAC threshold must be positive and finite")
 
+    if len(source) > 4:
+        # With only five or six references, RANSAC can lock onto an exact
+        # four-point subset and never form a larger consensus even when one
+        # direct fit keeps every reference inside the configured threshold.
+        # Accept that deterministic fit only when *all* anchors satisfy the
+        # same strict threshold; otherwise retain RANSAC's bad-anchor defense.
+        direct_homography, _ = cv2.findHomography(source, target, method=0)
+        if direct_homography is not None and np.all(np.isfinite(direct_homography)):
+            projected = cv2.perspectiveTransform(
+                source.reshape(-1, 1, 2), direct_homography
+            ).reshape(-1, 2)
+            direct_errors = np.linalg.norm(projected - target, axis=1)
+            if np.all(np.isfinite(direct_errors)) and np.all(
+                direct_errors <= threshold
+            ):
+                return direct_homography, np.ones(len(source), dtype=bool)
+
     method = cv2.RANSAC if len(source) > 4 else 0
     homography, mask = cv2.findHomography(
         source,

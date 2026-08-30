@@ -67,6 +67,50 @@ class VisionCalibrationTest(unittest.TestCase):
         with self.assertRaisesRegex(CalibrationError, "outliers"):
             self.build()
 
+    def test_consistent_six_anchor_layout_builds_without_ransac_false_rejection(self):
+        map_points = {
+            1: np.array([-150.0, -150.0]),
+            3: np.array([1550.0, -150.0]),
+            5: np.array([1550.0, 850.0]),
+            6: np.array([700.0, 850.0]),
+            7: np.array([-150.0, 850.0]),
+            8: np.array([700.0, -150.0]),
+        }
+        measured_pixels = {
+            1: np.array([130.81, 520.99]),
+            3: np.array([1147.72, 582.73]),
+            5: np.array([1079.35, 130.21]),
+            6: np.array([652.35, 100.97]),
+            7: np.array([239.18, 73.76]),
+            8: np.array([632.01, 550.74]),
+        }
+        samples = {
+            tag_id: [pixel.copy() for _ in range(20)]
+            for tag_id, pixel in measured_pixels.items()
+        }
+
+        calibration = build_planar_calibration(
+            samples,
+            map_points,
+            map_name="TestCase0",
+            map_contract_id="map-contract-live-regression",
+            pose_contract_id="pose-contract-live-regression",
+            image_size_px=(1280, 720),
+            reference_plane_height_mm=90.0,
+            robot_tag_height_mm=90.0,
+            minimum_samples_per_tag=20,
+            minimum_reference_tags=5,
+            minimum_inliers=5,
+            ransac_threshold_mm=10.0,
+            maximum_inlier_error_mm=15.0,
+            map_bounds_mm=(-150.0, 1550.0, -150.0, 850.0),
+            minimum_map_coverage_ratio=0.5,
+        )
+
+        self.assertEqual(calibration.quality.reference_count, 6)
+        self.assertEqual(calibration.quality.inlier_count, 6)
+        self.assertLessEqual(calibration.quality.max_error_mm, 10.0)
+
     def test_save_load_and_runtime_verification(self):
         calibration = self.build()
         with tempfile.TemporaryDirectory() as directory:

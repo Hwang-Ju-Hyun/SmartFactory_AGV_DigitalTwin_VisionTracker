@@ -37,6 +37,42 @@ class VisionGeometryTest(unittest.TestCase):
             project_point(homography, [50, 50]), [100, 50], atol=1e-6
         )
 
+    def test_consistent_six_anchor_grid_is_not_lost_to_small_sample_ransac(self):
+        # Real C270 measurements from the 3x2 TestCase0 reference layout.
+        # OpenCV RANSAC selects only four anchors for this small structured set,
+        # although a direct fit keeps every residual below the 10 mm threshold.
+        pixels = np.array(
+            [
+                [130.81, 520.99],
+                [1147.72, 582.73],
+                [1079.35, 130.21],
+                [652.35, 100.97],
+                [239.18, 73.76],
+                [632.01, 550.74],
+            ]
+        )
+        map_mm = np.array(
+            [
+                [-150.0, -150.0],
+                [1550.0, -150.0],
+                [1550.0, 850.0],
+                [700.0, 850.0],
+                [-150.0, 850.0],
+                [700.0, -150.0],
+            ]
+        )
+
+        homography, inliers = fit_pixel_to_map_homography(
+            pixels, map_mm, ransac_threshold_mm=10.0
+        )
+
+        self.assertTrue(np.all(inliers))
+        projected = np.asarray(
+            [project_point(homography, pixel) for pixel in pixels]
+        )
+        errors = np.linalg.norm(projected - map_mm, axis=1)
+        self.assertLessEqual(float(np.max(errors)), 10.0)
+
     def test_canonical_tag_axis_points_toward_top(self):
         tag_homography = np.array(
             [[50.0, 0.0, 50.0], [0.0, 50.0, 50.0], [0.0, 0.0, 1.0]]
