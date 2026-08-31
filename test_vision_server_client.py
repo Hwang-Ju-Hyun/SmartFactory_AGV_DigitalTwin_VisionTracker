@@ -282,7 +282,10 @@ class VisionServerClientIntegrationTest(unittest.TestCase):
         with patch(
             "vision_server_client.socket.create_connection",
             side_effect=[first_socket, second_socket],
-        ) as create_connection:
+        ) as create_connection, patch(
+            "vision_server_client.time.perf_counter",
+            side_effect=[100.0, 100.25, 100.5],
+        ):
             try:
                 client.start()
                 client.publish(observation())
@@ -292,6 +295,8 @@ class VisionServerClientIntegrationTest(unittest.TestCase):
                     "<HII", delivered[0], 2
                 )
                 self.assertEqual((packet_id, agv_id, sequence), (602, 1, 2))
+                reported_age_ms = struct.unpack_from("<I", delivered[0], 20)[0]
+                self.assertEqual(reported_age_ms, 507)
                 self.assertEqual(create_connection.call_count, 2)
             finally:
                 client.close()

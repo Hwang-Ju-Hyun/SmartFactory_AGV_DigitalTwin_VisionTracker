@@ -12,7 +12,8 @@ import secrets
 import socket
 import struct
 import threading
-from dataclasses import dataclass
+import time
+from dataclasses import dataclass, replace
 from enum import IntEnum
 from typing import Callable
 
@@ -186,6 +187,26 @@ class VisionHelloAck:
     session_id: int
 
 
+@dataclass(frozen=True)
+class _QueuedObservation:
+    observation: VisionObservation
+    published_monotonic_s: float
+
+    def observation_for_send(self, now_s: float) -> VisionObservation:
+        # Round queue dwell upward so transport delay is never hidden by
+        # millisecond conversion, including when this item is retried.
+        queued_age_ms = int(
+            math.ceil(max(0.0, float(now_s) - self.published_monotonic_s) * 1000.0)
+        )
+        reported_age_ms = min(
+            0xFFFFFFFF,
+            int(self.observation.reported_age_ms) + queued_age_ms,
+        )
+        if reported_age_ms == self.observation.reported_age_ms:
+            return self.observation
+        return replace(self.observation, reported_age_ms=reported_age_ms)
+
+
 def _encode_identity(value: str) -> bytes:
     try:
         encoded = str(value).encode("ascii")
@@ -343,7 +364,7 @@ class VisionServerClient:
             raise ValueError("session_id must be a non-zero uint64")
         self._log = log
         self._condition = threading.Condition()
-        self._latest: VisionObservation | None = None
+        self._latest: _QueuedObservation | None = None
         self._stop_requested = False
         self._started = False
         self._next_sequence = 1
@@ -370,7 +391,9 @@ class VisionServerClient:
                 return
             # Overwrite instead of queueing camera history. The Server needs the
             # latest state, not stale frames accumulated during a disconnect.
-            self._latest = observation
+            # Retaining this timestamp makes any surviving latest item age while
+            # the connection or sender is delayed.
+            self._latest = _QueuedObservation(observation, time.perf_counter())
             self._condition.notify_all()
 
     def close(self) -> None:
@@ -380,7 +403,7 @@ class VisionServerClient:
         if self._started:
             self._thread.join(timeout=max(2.0, self.config.connect_timeout_seconds + 1.0))
 
-    def _take_latest(self) -> VisionObservation | None:
+    def _take_latest(self) -> _QueuedObservation | None:
         with self._condition:
             while self._latest is None and not self._stop_requested:
                 self._condition.wait(timeout=0.5)
@@ -451,8 +474,8 @@ class VisionServerClient:
                         break
                     continue
 
-            observation = self._take_latest()
-            if observation is None:
+            queued = self._take_latest()
+            if queued is None:
                 break
             sequence = self._next_sequence
             self._next_sequence += 1
@@ -462,6 +485,7 @@ class VisionServerClient:
                 self._log("[SERVER] Vision transport sequence exhausted; stopping sender")
                 break
             try:
+                observation = queued.observation_for_send(time.perf_counter())
                 sock.sendall(
                     encode_vision_observation_frame(
                         agv_id=self.config.agv_id,
@@ -479,7 +503,7 @@ class VisionServerClient:
                 # while sendall failed, it remains preferable to this one.
                 with self._condition:
                     if self._latest is None:
-                        self._latest = observation
+                        self._latest = queued
 
         if sock is not None:
             sock.close()
