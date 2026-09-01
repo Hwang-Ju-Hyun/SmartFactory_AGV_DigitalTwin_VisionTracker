@@ -30,6 +30,7 @@ from vision_tracker_preview import (
     _probe_capture,
     annotate_frame,
     build_server_observation,
+    configured_robot_pose_contract,
     load_config,
     open_camera,
     require_frame_size,
@@ -133,6 +134,12 @@ class VisionPreviewGateTest(unittest.TestCase):
             0,
             None,
         )
+
+    def test_production_pose_contract_matches_measured_robot_origin(self):
+        contract = configured_robot_pose_contract(self.config)
+        self.assertEqual(contract.forward_offset_mm, 0.0)
+        self.assertEqual(contract.left_offset_mm, 0.0)
+        self.assertEqual(contract.contract_id, "f84eb43ebb6cf7ff")
 
     def test_pixel_detection_does_not_become_metric_pose_without_calibration(self):
         _, record = self.annotate([robot_observation()], np.eye(3))

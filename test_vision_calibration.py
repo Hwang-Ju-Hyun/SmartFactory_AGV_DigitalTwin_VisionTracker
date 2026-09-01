@@ -159,6 +159,24 @@ class VisionCalibrationTest(unittest.TestCase):
                 minimum_map_coverage_ratio=0.5,
             )
 
+    def test_changed_robot_pose_contract_is_rejected(self):
+        calibration = self.build()
+        with self.assertRaisesRegex(CalibrationError, "pose alignment changed"):
+            validate_calibration_compatibility(
+                calibration,
+                map_name="TestCase0",
+                map_contract_id="map-contract-test",
+                pose_contract_id="different-pose-contract",
+                image_size_px=(1280, 720),
+                reference_plane_height_mm=120.0,
+                robot_tag_height_mm=120.0,
+                reference_map_mm=self.map_points,
+                minimum_reference_tags=5,
+                minimum_inliers=5,
+                maximum_error_mm=15.0,
+                minimum_map_coverage_ratio=0.5,
+            )
+
     def test_different_tag_planes_are_rejected(self):
         with self.assertRaisesRegex(CalibrationError, "different height planes"):
             build_planar_calibration(

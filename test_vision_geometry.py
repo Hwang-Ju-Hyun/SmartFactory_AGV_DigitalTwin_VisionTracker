@@ -124,6 +124,14 @@ class VisionGeometryTest(unittest.TestCase):
                 )
                 np.testing.assert_allclose(actual, point, atol=1e-9)
 
+    def test_zero_body_offset_preserves_tag_center_at_every_heading(self):
+        for heading in (0.0, 90.0, 180.0, -90.0):
+            with self.subTest(heading=heading):
+                actual = tag_center_to_robot_origin(
+                    100.0, 200.0, heading, 0.0, 0.0
+                )
+                np.testing.assert_allclose(actual, (100.0, 200.0), atol=1e-9)
+
 
 if __name__ == "__main__":
     unittest.main()
