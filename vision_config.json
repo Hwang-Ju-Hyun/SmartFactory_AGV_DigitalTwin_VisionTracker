@@ -35,11 +35,11 @@
     "reference_plane_height_mm": 90.0,
     "robot_tag_height_mm": 90.0,
     "reference_tag_anchors": {
-      "1": { "server_units": [47.0, -39.0] },
-      "5": { "server_units": [81.0, -19.0] },
-      "6": { "server_units": [64.0, -19.0] },
-      "7": { "server_units": [47.0, -19.0] },
-      "8": { "server_units": [64.0, -39.0] }
+      "1": { "server_units": [46.0, -40.0] },
+      "5": { "server_units": [82.0, -18.0] },
+      "6": { "server_units": [64.0, -18.0] },
+      "7": { "server_units": [46.0, -18.0] },
+      "8": { "server_units": [64.0, -40.0] }
     }
   },
   "calibration": {
