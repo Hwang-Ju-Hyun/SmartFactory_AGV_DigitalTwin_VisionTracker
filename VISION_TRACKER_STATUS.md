@@ -3,9 +3,9 @@
 ## Objective
 
 Measure the real AGV's absolute TestCase0 pose (`x`, `z`, heading) from an
-overhead camera. This measurement will later let the Server compare planned
-motion with the physical robot and let Unity display both. It is not yet a
-closed-loop motor correction source.
+overhead camera. The Server can compare it with planned motion, relay it to
+Unity, and—only in physical-fleet correction mode—use it for bounded node
+correction. VisionTracker itself cannot send motor commands.
 
 ## Implemented
 
@@ -33,25 +33,24 @@ closed-loop motor correction source.
 
 ## Physical information still required
 
-- confirmation that the latest camera placement is rigid and final
-- confirmation that fixed references really share the robot tag's 90 mm plane
-- live fixed-reference verification of the local locked 35 cm calibration
+- confirmation that the latest camera placement remains rigid and final
 - measured node-position and heading error across the map
 - moving-robot loss and end-to-end latency measurements
 
 `vision_config.json` records the current chassis measurement: the ID 0 surface
-is approximately 90 mm above the floor, its printed front is aligned with the
+is approximately 140 mm above the floor, its printed front is aligned with the
 chassis front, and its centre is over the drive-wheel axle midpoint. It also
-contains six anchors and a 90 mm reference plane. Software cannot verify that
+contains five anchors on the same 140 mm reference plane. Software cannot verify that
 physical height, so floor references must be raised or a later 3D model must
 compensate the plane difference.
 
 ## Known limitation
 
 The webcam lens is not intrinsically calibrated. A planar homography cannot
-fully remove radial lens distortion. Server integration must remain
-observation-only until known-node error is measured. Checkerboard assets are
-included for camera-specific calibration.
+fully remove radial lens distortion. Node 1 is verified after the 140 mm-plane
+calibration, but physical correction across the map must wait until known-node
+error is measured at multiple positions. Checkerboard assets are included for
+camera-specific calibration.
 
 Floor reference tags and a robot tag on top of the chassis are different
 planes. The first version requires equal heights. A later version may instead

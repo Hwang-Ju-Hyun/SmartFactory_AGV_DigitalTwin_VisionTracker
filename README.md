@@ -29,7 +29,9 @@ overhead camera -> VisionTracker -> Server -> Unity
 - A latest-only background TCP sender connects only while a statically
   compatible locked calibration exists. Camera processing never waits for the
   Server, and reconnects do not replay a stale frame queue.
-- Server output is observation-only and cannot command the ESP32.
+- Vision's Server transport cannot command the ESP32 directly. A Server started
+  in physical-fleet correction mode may use these observations for bounded
+  node correction, so validate known-node error across the map first.
 
 ## TestCase0 coordinates
 
@@ -64,7 +66,7 @@ HELLO carries the map and pose contract IDs, and the Server rejects a mismatch.
 5. Measure the printed-top-to-chassis heading correction and the vector from
    the ID 0 centre to the Server AGV origin. Enter `[forward_mm, left_mm]` in
    `tag_center_to_robot_origin_body_mm`. The current chassis measurement is a
-   90 mm robot-tag height, 0 degree heading correction, and `[0, 0]` because
+   140 mm robot-tag height, 0 degree heading correction, and `[0, 0]` because
    ID 0 is centred over the drive-wheel axle midpoint.
 6. Run the preview and press `c`. Do not move the camera or tags while 30
    samples per reference are collected.

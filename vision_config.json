@@ -32,8 +32,8 @@
   "map": {
     "contract_file": "testcase0_map.json",
     "coordinate_system": "local_x_mm_z_mm_heading_deg_0_is_positive_x_ccw",
-    "reference_plane_height_mm": 90.0,
-    "robot_tag_height_mm": 90.0,
+    "reference_plane_height_mm": 140.0,
+    "robot_tag_height_mm": 140.0,
     "reference_tag_anchors": {
       "1": { "server_units": [46.0, -40.0] },
       "5": { "server_units": [82.0, -18.0] },

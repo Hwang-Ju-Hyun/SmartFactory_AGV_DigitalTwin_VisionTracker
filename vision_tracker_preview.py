@@ -894,7 +894,7 @@ def annotate_frame(
     )
     cv2.putText(
         output,
-        "LENS: UNCALIBRATED PREVIEW - DO NOT SEND MAP POSE TO SERVER",
+        "LENS: NO INTRINSICS - VERIFY KNOWN-NODE ERROR ACROSS MAP",
         (20, 95),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.55,
