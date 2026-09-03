@@ -7,7 +7,7 @@
     "fps": 30,
     "fourcc": "MJPG",
     "auto_exposure": false,
-    "exposure": -4.0,
+    "exposure": -5.0,
     "minimum_capture_fps": 25.0,
     "probe_frames": 10
   },
@@ -37,9 +37,9 @@
     "reference_tag_anchors": {
       "1": { "server_units": [46.0, -40.0] },
       "5": { "server_units": [82.0, -18.0] },
-      "6": { "server_units": [64.0, -18.0] },
+      "6": { "server_units": [64.0, -15.0] },
       "7": { "server_units": [46.0, -18.0] },
-      "8": { "server_units": [64.0, -40.0] }
+      "8": { "server_units": [64.0, -43.6] }
     }
   },
   "calibration": {

@@ -53,9 +53,8 @@ from vision_server_client import (
 from vision_geometry import (
     image_heading_degrees,
     map_pose_from_pixel_axis,
-    normalize_signed_degrees,
-    tag_center_to_robot_origin,
     tag_axis_point,
+    trace_tag_center_to_robot_origin,
 )
 from vision_map import MapContract
 
@@ -818,19 +817,19 @@ def annotate_frame(
             and calibration is not None
             and pose_contract is not None
         ):
-            tag_x_mm, tag_z_mm, heading_deg = map_pose_from_pixel_axis(
+            tag_x_mm, tag_z_mm, raw_tag_heading_deg = map_pose_from_pixel_axis(
                 map_homography, observation.center_px, front_pixel
             )
-            heading_deg = normalize_signed_degrees(
-                heading_deg + pose_contract.heading_offset_deg
-            )
-            x_mm, z_mm = tag_center_to_robot_origin(
+            transform = trace_tag_center_to_robot_origin(
                 tag_x_mm,
                 tag_z_mm,
-                heading_deg,
+                raw_tag_heading_deg,
+                pose_contract.heading_offset_deg,
                 pose_contract.forward_offset_mm,
                 pose_contract.left_offset_mm,
             )
+            heading_deg = transform.body_heading_deg
+            x_mm, z_mm = transform.body_x_mm, transform.body_z_mm
             allowed_margin = float(config["tracking"]["allowed_map_margin_mm"])
             if not map_contract.contains_local_mm(x_mm, z_mm, allowed_margin):
                 robot_record["metric_rejection"] = "OUTSIDE_MAP_ROI"
@@ -849,6 +848,24 @@ def annotate_frame(
                 if calibration is not None
                 else None,
                 "verification_age_s": float(verification_age_s or 0.0),
+            }
+            robot_record["transform_diagnostic"] = {
+                "image_heading_deg": float(image_heading),
+                "raw_tag_center_mm": {
+                    "x_mm": transform.raw_tag_x_mm,
+                    "z_mm": transform.raw_tag_z_mm,
+                },
+                "raw_tag_heading_deg": transform.raw_tag_heading_deg,
+                "heading_offset_deg": transform.heading_offset_deg,
+                "body_heading_deg": transform.body_heading_deg,
+                "applied_tag_to_body_offset_body_mm": {
+                    "forward_mm": transform.forward_offset_mm,
+                    "left_mm": transform.left_offset_mm,
+                },
+                "body_center_mm": {
+                    "x_mm": transform.body_x_mm,
+                    "z_mm": transform.body_z_mm,
+                },
             }
             center = tuple(np.rint(observation.center_px).astype(int))
             cv2.putText(
@@ -956,7 +973,9 @@ def draw_pose_estimate(
 
 
 def pose_estimate_record(
-    estimate: PoseEstimate, map_contract: MapContract
+    estimate: PoseEstimate,
+    map_contract: MapContract,
+    transform_diagnostic: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     record: dict[str, Any] = {
         "state": estimate.state.value,
@@ -978,6 +997,8 @@ def pose_estimate_record(
         }
     else:
         record["pose"] = None
+    if estimate.state.value == "MEASURED" and transform_diagnostic is not None:
+        record["transform_diagnostic"] = transform_diagnostic
     return record
 
 
@@ -1531,7 +1552,16 @@ def run_camera(
             ):
                 last_console_time = evaluation_now_s
                 last_pose_state = estimate.state.value
-                record = pose_estimate_record(estimate, map_contract)
+                transform_diagnostic = (
+                    robot_record.get("transform_diagnostic")
+                    if robot_record is not None
+                    else None
+                )
+                record = pose_estimate_record(
+                    estimate,
+                    map_contract,
+                    transform_diagnostic,
+                )
                 record["monotonic_s"] = evaluation_now_s
                 record["calibration_state"] = calibration_state
                 print("[POSE] " + json.dumps(record, ensure_ascii=False))

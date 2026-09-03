@@ -147,9 +147,38 @@ lighting; a long automatic exposure can reduce the rate. Resolution changes
 invalidate an existing locked calibration by design, so create and validate a
 new calibration after adopting the 720p profile.
 
+## Stationary-rotation offset diagnostic
+
+The preview's sampled `[POSE]` JSON includes `transform_diagnostic` only for
+fresh `MEASURED` poses. It records the raw map-space AprilTag center and
+heading, configured heading and tag-to-body offsets, and final body/axle-center
+pose. `HELD` and `LOST` records never contain a transform sample.
+
+To diagnose the tag-to-axle offset, keep the physical axle center in one place,
+rotate through at least four poses spanning more than 45 degrees, and retain
+the preview console output:
+
+```powershell
+py -3.12 -u vision_tracker_preview.py 2>&1 | Tee-Object -FilePath vision-rotation.log
+```
+
+After stopping the preview, analyze that log:
+
+```powershell
+py -3.12 vision_rotation_diagnostic.py vision-rotation.log --calibration-id e7c58f032c843335
+```
+
+The reported candidate is read-only: the tool never updates
+`vision_config.json` or a locked calibration. `OFFSET_ERROR_LIKELY` means a
+single body-frame offset removes most of the heading-dependent circular/arc
+motion. `IRREGULAR_MOTION_LIKELY` means a single offset leaves substantial
+non-circular residual, consistent with real slip, caster motion, or shifting
+loads. Treat `INCONCLUSIVE` and insufficient heading span as a request for a
+cleaner stationary-rotation sample, not as permission to change the offset.
+
 ## Offline verification
 
 ```powershell
-py -3.12 -m py_compile vision_tracker_preview.py vision_server_client.py vision_geometry.py vision_map.py vision_calibration.py pose_tracker.py
-py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview test_vision_server_client
+py -3.12 -m py_compile vision_tracker_preview.py vision_server_client.py vision_geometry.py vision_map.py vision_calibration.py vision_rotation_diagnostic.py pose_tracker.py
+py -3.12 -m unittest test_pose_tracker test_vision_calibration test_vision_geometry test_vision_map test_vision_preview test_vision_rotation_diagnostic test_vision_server_client
 ```

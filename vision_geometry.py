@@ -8,9 +8,25 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
+
+
+@dataclass(frozen=True)
+class RobotOriginTransformTrace:
+    """Auditable inputs and outputs for the tag-center to robot-origin step."""
+
+    raw_tag_x_mm: float
+    raw_tag_z_mm: float
+    raw_tag_heading_deg: float
+    heading_offset_deg: float
+    body_heading_deg: float
+    forward_offset_mm: float
+    left_offset_mm: float
+    body_x_mm: float
+    body_z_mm: float
 
 
 def _point2(value: Sequence[float], name: str) -> np.ndarray:
@@ -183,6 +199,58 @@ def tag_center_to_robot_origin(
         + float(left_offset_mm) * cos_heading
     )
     return x_mm, z_mm
+
+
+def trace_tag_center_to_robot_origin(
+    tag_x_mm: float,
+    tag_z_mm: float,
+    raw_tag_heading_deg: float,
+    heading_offset_deg: float,
+    forward_offset_mm: float,
+    left_offset_mm: float,
+) -> RobotOriginTransformTrace:
+    """Return the unchanged robot-origin transform together with its inputs.
+
+    ``raw_tag_heading_deg`` is the map-space heading obtained directly from
+    the projected tag axis. The configured heading offset is applied before
+    rotating the body-frame forward/left offset, exactly as in the production
+    pose path.
+    """
+
+    values = np.asarray(
+        [
+            tag_x_mm,
+            tag_z_mm,
+            raw_tag_heading_deg,
+            heading_offset_deg,
+            forward_offset_mm,
+            left_offset_mm,
+        ],
+        dtype=np.float64,
+    )
+    if not np.all(np.isfinite(values)):
+        raise ValueError("robot-origin trace values must be finite")
+    body_heading_deg = normalize_signed_degrees(
+        float(raw_tag_heading_deg) + float(heading_offset_deg)
+    )
+    body_x_mm, body_z_mm = tag_center_to_robot_origin(
+        tag_x_mm,
+        tag_z_mm,
+        body_heading_deg,
+        forward_offset_mm,
+        left_offset_mm,
+    )
+    return RobotOriginTransformTrace(
+        raw_tag_x_mm=float(tag_x_mm),
+        raw_tag_z_mm=float(tag_z_mm),
+        raw_tag_heading_deg=float(raw_tag_heading_deg),
+        heading_offset_deg=float(heading_offset_deg),
+        body_heading_deg=body_heading_deg,
+        forward_offset_mm=float(forward_offset_mm),
+        left_offset_mm=float(left_offset_mm),
+        body_x_mm=body_x_mm,
+        body_z_mm=body_z_mm,
+    )
 
 
 def tag_axis_point(

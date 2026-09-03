@@ -11,6 +11,7 @@ from vision_geometry import (
     tag_center_to_robot_origin,
     tag_axis_point,
     tag_front_midpoint,
+    trace_tag_center_to_robot_origin,
 )
 
 
@@ -131,6 +132,21 @@ class VisionGeometryTest(unittest.TestCase):
                     100.0, 200.0, heading, 0.0, 0.0
                 )
                 np.testing.assert_allclose(actual, (100.0, 200.0), atol=1e-9)
+
+    def test_robot_origin_trace_preserves_raw_and_applied_values(self):
+        trace = trace_tag_center_to_robot_origin(
+            100.0, 200.0, -100.0, 10.0, 10.0, 5.0
+        )
+        self.assertEqual(trace.raw_tag_x_mm, 100.0)
+        self.assertEqual(trace.raw_tag_z_mm, 200.0)
+        self.assertEqual(trace.raw_tag_heading_deg, -100.0)
+        self.assertEqual(trace.heading_offset_deg, 10.0)
+        self.assertEqual(trace.body_heading_deg, -90.0)
+        self.assertEqual(trace.forward_offset_mm, 10.0)
+        self.assertEqual(trace.left_offset_mm, 5.0)
+        np.testing.assert_allclose(
+            (trace.body_x_mm, trace.body_z_mm), (105.0, 190.0), atol=1e-9
+        )
 
 
 if __name__ == "__main__":

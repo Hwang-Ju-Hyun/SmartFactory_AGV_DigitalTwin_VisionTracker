@@ -33,6 +33,7 @@ from vision_tracker_preview import (
     configured_robot_pose_contract,
     load_config,
     open_camera,
+    pose_estimate_record,
     require_frame_size,
     run_camera,
     validate_configuration,
@@ -205,6 +206,45 @@ class VisionPreviewGateTest(unittest.TestCase):
         self.assertAlmostEqual(record["map_pose"]["x_mm"], 105.0)
         self.assertAlmostEqual(record["map_pose"]["z_mm"], 90.0)
         self.assertAlmostEqual(record["map_pose"]["heading_deg"], -90.0)
+        diagnostic = record["transform_diagnostic"]
+        self.assertAlmostEqual(diagnostic["image_heading_deg"], 90.0)
+        self.assertEqual(
+            diagnostic["raw_tag_center_mm"], {"x_mm": 100.0, "z_mm": 100.0}
+        )
+        self.assertAlmostEqual(diagnostic["raw_tag_heading_deg"], -90.0)
+        self.assertEqual(diagnostic["heading_offset_deg"], 0.0)
+        self.assertEqual(
+            diagnostic["applied_tag_to_body_offset_body_mm"],
+            {"forward_mm": 10.0, "left_mm": 5.0},
+        )
+        self.assertEqual(
+            diagnostic["body_center_mm"], {"x_mm": 105.0, "z_mm": 90.0}
+        )
+
+    def test_pose_record_includes_transform_only_for_measured_state(self):
+        diagnostic = {"raw_tag_center_mm": {"x_mm": 1.0, "z_mm": 2.0}}
+        measured = PoseEstimate(
+            state=PoseState.MEASURED,
+            pose=MetricPose(10.0, 20.0, 30.0),
+            measurement_age_ms=5.0,
+            measured_at_s=1.0,
+            source_sequence=2,
+            calibration_id="cal",
+            fresh=True,
+        )
+        held = PoseEstimate(
+            state=PoseState.HELD,
+            pose=MetricPose(10.0, 20.0, 30.0),
+            measurement_age_ms=150.0,
+            measured_at_s=1.0,
+            source_sequence=2,
+            calibration_id="cal",
+            fresh=False,
+        )
+        measured_record = pose_estimate_record(measured, self.map_contract, diagnostic)
+        held_record = pose_estimate_record(held, self.map_contract, diagnostic)
+        self.assertEqual(measured_record["transform_diagnostic"], diagnostic)
+        self.assertNotIn("transform_diagnostic", held_record)
 
     def test_outside_map_roi_is_not_metric_output(self):
         config = deepcopy(self.config)
@@ -480,7 +520,7 @@ class VisionPreviewGateTest(unittest.TestCase):
             (1280, 720, 30, "MJPG"),
         )
         self.assertFalse(camera["auto_exposure"])
-        self.assertEqual(camera["exposure"], -4.0)
+        self.assertEqual(camera["exposure"], -5.0)
 
     def test_open_camera_keeps_mjpg_as_final_stream_setting(self):
         capture = ConfigurableFakeCapture()
@@ -506,7 +546,7 @@ class VisionPreviewGateTest(unittest.TestCase):
                 cv2.CAP_PROP_AUTO_EXPOSURE,
             ],
         )
-        self.assertEqual(capture.set_calls[6], (cv2.CAP_PROP_EXPOSURE, -4.0))
+        self.assertEqual(capture.set_calls[6], (cv2.CAP_PROP_EXPOSURE, -5.0))
         self.assertEqual((actual["width"], actual["height"]), (1280, 720))
         self.assertAlmostEqual(actual["measured_fps"], 29.8)
         self.assertEqual(actual["fourcc"], "MJPG")
