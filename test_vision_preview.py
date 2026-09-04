@@ -138,9 +138,9 @@ class VisionPreviewGateTest(unittest.TestCase):
 
     def test_production_pose_contract_matches_measured_robot_origin(self):
         contract = configured_robot_pose_contract(self.config)
-        self.assertEqual(contract.forward_offset_mm, 60.0)
-        self.assertEqual(contract.left_offset_mm, 0.0)
-        self.assertEqual(contract.contract_id, "fb3cad48a32b9893")
+        self.assertEqual(contract.forward_offset_mm, 65.77)
+        self.assertEqual(contract.left_offset_mm, 13.10)
+        self.assertEqual(contract.contract_id, "344e8fbf8d04d6ae")
 
     def test_pixel_detection_does_not_become_metric_pose_without_calibration(self):
         _, record = self.annotate([robot_observation()], np.eye(3))
